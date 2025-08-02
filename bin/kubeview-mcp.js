@@ -28,10 +28,10 @@ function error(message) {
 async function main() {
   const projectRoot = path.resolve(__dirname, '..');
   const distDir = path.join(projectRoot, 'dist');
-  const cliPath = path.join(distDir, 'src', 'cli', 'cli.js');
+  const indexPath = path.join(distDir, 'src', 'index.js');
 
   // Check if project is built
-  if (!fs.existsSync(distDir) || !fs.existsSync(cliPath)) {
+  if (!fs.existsSync(distDir) || !fs.existsSync(indexPath)) {
     log('🔧 Building kubeview-mcp...', colors.yellow);
     
     try {
@@ -54,8 +54,8 @@ async function main() {
 
   // Run the CLI
   try {
-    const { main: runCli } = await import(cliPath);
-    await runCli();
+    const { main } = await import(`file://${indexPath}`);
+    await main();
   } catch (runError) {
     error('❌ Failed to start kubeview-mcp:');
     console.error(runError);
