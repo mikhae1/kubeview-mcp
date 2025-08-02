@@ -18,7 +18,7 @@ const colors = {
 };
 
 function log(message, color = colors.reset) {
-  console.log(`${color}${message}${colors.reset}`);
+  console.error(`${color}${message}${colors.reset}`);
 }
 
 function error(message) {
@@ -28,7 +28,7 @@ function error(message) {
 async function main() {
   const projectRoot = path.resolve(__dirname, '..');
   const distDir = path.join(projectRoot, 'dist');
-  
+
   // Try both possible locations for the index.js file
   const indexPathFlat = path.join(distDir, 'index.js');
   const indexPathNested = path.join(distDir, 'src', 'index.js');
@@ -59,23 +59,23 @@ async function main() {
   try {
     // Determine the correct index path after build
     const finalIndexPath = fs.existsSync(indexPathFlat) ? indexPathFlat : indexPathNested;
-    
+
     // Debug: Check if the file actually exists
     if (!fs.existsSync(finalIndexPath)) {
       error(`❌ Built file not found at either location:`);
       log(`   - Flat: ${indexPathFlat}`, colors.red);
       log(`   - Nested: ${indexPathNested}`, colors.red);
-      
+
       // List what files do exist
       const distContents = fs.existsSync(distDir) ? fs.readdirSync(distDir) : ['dist directory not found'];
       log(`📂 Contents of dist/: ${distContents.join(', ')}`, colors.blue);
-      
+
       const srcDir = path.join(distDir, 'src');
       if (fs.existsSync(srcDir)) {
         const srcContents = fs.readdirSync(srcDir);
         log(`📂 Contents of dist/src/: ${srcContents.join(', ')}`, colors.blue);
       }
-      
+
       process.exit(1);
     }
 

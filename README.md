@@ -50,6 +50,28 @@
 
 ## 🚀 Quick Start
 
+### Zero-install via npx
+
+```bash
+npx https://github.com/mikhae1/kubeview-mcp
+```
+
+_For Cursor IDE or any other MCP-compatible client, add the following entry to your_ `mcp.json` _file (usually located in `~/.cursor/mcp.json`):_
+
+```json
+{
+  "mcpServers": {
+    "kubeview-mcp": {
+      "command": "npx",
+      "args": ["https://github.com/mikhae1/kubeview-mcp"],
+      "env": {
+        "KUBECONFIG": "$HOME/.kube/config"
+      }
+    }
+  }
+}
+```
+
 ### Prerequisites
 
 - **Node.js ≥ 18**

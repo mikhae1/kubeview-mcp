@@ -148,7 +148,7 @@ class SetupManager {
   createMcpServerConfig() {
     return {
       command: 'npx',
-      args: [this.projectRoot],
+      args: ['https://github.com/mikhae1/kubeview-mcp'],
       env: {
         KUBECONFIG: process.env.KUBECONFIG || this.defaultKubeconfig
       }
@@ -303,6 +303,21 @@ class SetupManager {
     console.log('  npm start setup cursor');
     console.log('  npm start setup both');
     console.log('  npm start setup');
+
+    console.log('\nZero-install via npx:\n');
+    console.log('npx https://github.com/mikhae1/kubeview-mcp\n');
+    console.log('Add the following to your mcp.json (e.g. ~/.cursor/mcp.json):\n');
+    console.log(`{
+  "mcpServers": {
+    "kubeview-mcp": {
+      "command": "npx",
+      "args": ["https://github.com/mikhae1/kubeview-mcp"],
+      "env": {
+        "KUBECONFIG": "$HOME/.kube/config"
+      }
+    }
+  }
+}`);
   }
 
   // Main setup method
