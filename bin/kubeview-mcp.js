@@ -33,7 +33,7 @@ async function main() {
   // Check if project is built
   if (!fs.existsSync(distDir) || !fs.existsSync(indexPath)) {
     log('🔧 Building kubeview-mcp...', colors.yellow);
-    
+
     try {
       // Install dependencies if node_modules doesn't exist
       const nodeModulesPath = path.join(projectRoot, 'node_modules');
@@ -54,6 +54,24 @@ async function main() {
 
   // Run the CLI
   try {
+    // Debug: Check if the file actually exists
+    if (!fs.existsSync(indexPath)) {
+      error(`❌ Built file not found: ${indexPath}`);
+      
+      // List what files do exist
+      const distContents = fs.existsSync(distDir) ? fs.readdirSync(distDir) : ['dist directory not found'];
+      log(`📂 Contents of dist/: ${distContents.join(', ')}`, colors.blue);
+      
+      const srcDir = path.join(distDir, 'src');
+      if (fs.existsSync(srcDir)) {
+        const srcContents = fs.readdirSync(srcDir);
+        log(`📂 Contents of dist/src/: ${srcContents.join(', ')}`, colors.blue);
+      }
+      
+      process.exit(1);
+    }
+
+    log(`🚀 Starting kubeview-mcp from: ${indexPath}`, colors.green);
     const { main } = await import(`file://${indexPath}`);
     await main();
   } catch (runError) {
