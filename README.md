@@ -38,13 +38,13 @@
 
 ## ✨ Features
 
-• **Kubernetes Resources** – Read-only access to Pods, Services, Deployments, Namespaces, ConfigMaps, Secrets, PVCs and more.
-• **Helm Support** – Deep inspection of Helm releases including manifests, values, hooks and history.
-• **Argo & ArgoCD Integration** – Seamlessly interact with Argo Workflows and ArgoCD applications.
-• **Advanced Storage Analysis** – Diagnose PV/PVC issues with smart binding & reclaim-policy checks.
-• **Robust Monitoring** – CPU / memory metrics out-of-the-box, optionally enriched with Prometheus data.
-• **Log Streaming** – Tail or grep container logs directly from your AI assistant.
-• **Cluster Events** – Filter and analyse live Kubernetes events.
+- **Kubernetes Resources** – Read-only access to Pods, Services, Deployments, Namespaces, ConfigMaps, Secrets, PVCs and more.
+- **Helm Support** – Deep inspection of Helm releases including manifests, values, hooks and history.
+- **Argo & ArgoCD Integration** – Seamlessly interact with Argo Workflows and ArgoCD applications.
+- **Advanced Storage Analysis** – Diagnose PV/PVC issues with smart binding & reclaim-policy checks.
+- **Robust Monitoring** – CPU / memory metrics out-of-the-box, optionally enriched with Prometheus data.
+- **Log Streaming** – Tail or grep container logs directly from your AI assistant.
+- **Cluster Events** – Filter and analyse live Kubernetes events.
 
 ---
 

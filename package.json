@@ -12,8 +12,16 @@
     }
   },
   "bin": {
-    "kubeview-mcp": "./dist/src/cli/cli.js"
+    "kubeview-mcp": "./bin/kubeview-mcp.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "scripts/",
+    "dist/",
+    "*.md",
+    "*.json"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx --watch src/cli/cli.ts",
