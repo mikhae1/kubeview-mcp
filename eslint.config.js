@@ -43,7 +43,7 @@ export default [
     },
   },
   {
-    files: ['**/*.test.ts', '**/*.spec.ts', 'tests/**/*.ts', '__mocks__/**/*.ts'],
+            files: ['**/*.test.ts', '**/*.spec.ts', 'tests/**/*.ts'],
     languageOptions: {
       globals: {
         describe: 'readonly',
@@ -92,7 +92,7 @@ export default [
       'eslint.config.js',
       'tasks/',
       'scripts/main.js',
-      'scripts/setup.js',
+              'bin/setup.js',
       '*.d.ts',
     ],
   },

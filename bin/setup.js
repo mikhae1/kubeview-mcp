@@ -292,7 +292,7 @@ class SetupManager {
     this.log('Kube MCP Setup Tool', colors.blue);
     console.log('\nUsage:');
     console.log('  npm start setup [target]');
-    console.log('  node scripts/setup.js [target]');
+    console.log('  node bin/setup.js [target]');
     console.log('\nTargets:');
     console.log('  claude   - Setup Claude Desktop configuration');
     console.log('  cursor   - Setup Cursor IDE configuration');

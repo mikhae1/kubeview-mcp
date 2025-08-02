@@ -26,7 +26,7 @@
     "build": "tsc",
     "dev": "tsx --watch src/cli/cli.ts",
     "start": "node scripts/main.js",
-    "setup": "node scripts/setup.js",
+    "setup": "node bin/setup.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint . --ext .ts",

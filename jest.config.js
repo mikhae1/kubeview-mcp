@@ -5,7 +5,7 @@ export default {
   extensionsToTreatAsEsm: ['.ts'],
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
-    '^@kubernetes/client-node$': '<rootDir>/__mocks__/@kubernetes/client-node.ts'
+    '^@kubernetes/client-node$': '<rootDir>/tests/__mocks__/@kubernetes/client-node.ts'
   },
   transform: {
     '^.+\\.tsx?$': [

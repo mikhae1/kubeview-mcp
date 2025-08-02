@@ -21,7 +21,7 @@ const colors = {
 class KubeMCPCLI {
   constructor() {
     this.projectRoot = path.resolve(__dirname, '..');
-    this.setupScript = path.join(__dirname, 'setup.js');
+    this.setupScript = path.join(this.projectRoot, 'bin', 'setup.js');
     this.cliScript = path.join(this.projectRoot, 'dist', 'src', 'cli', 'cli.js');
   }
 
