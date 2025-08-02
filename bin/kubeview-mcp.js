@@ -28,10 +28,13 @@ function error(message) {
 async function main() {
   const projectRoot = path.resolve(__dirname, '..');
   const distDir = path.join(projectRoot, 'dist');
-  const indexPath = path.join(distDir, 'src', 'index.js');
+  
+  // Try both possible locations for the index.js file
+  const indexPathFlat = path.join(distDir, 'index.js');
+  const indexPathNested = path.join(distDir, 'src', 'index.js');
 
   // Check if project is built
-  if (!fs.existsSync(distDir) || !fs.existsSync(indexPath)) {
+  if (!fs.existsSync(distDir) || (!fs.existsSync(indexPathFlat) && !fs.existsSync(indexPathNested))) {
     log('🔧 Building kubeview-mcp...', colors.yellow);
 
     try {
@@ -54,9 +57,14 @@ async function main() {
 
   // Run the CLI
   try {
+    // Determine the correct index path after build
+    const finalIndexPath = fs.existsSync(indexPathFlat) ? indexPathFlat : indexPathNested;
+    
     // Debug: Check if the file actually exists
-    if (!fs.existsSync(indexPath)) {
-      error(`❌ Built file not found: ${indexPath}`);
+    if (!fs.existsSync(finalIndexPath)) {
+      error(`❌ Built file not found at either location:`);
+      log(`   - Flat: ${indexPathFlat}`, colors.red);
+      log(`   - Nested: ${indexPathNested}`, colors.red);
       
       // List what files do exist
       const distContents = fs.existsSync(distDir) ? fs.readdirSync(distDir) : ['dist directory not found'];
@@ -71,8 +79,8 @@ async function main() {
       process.exit(1);
     }
 
-    log(`🚀 Starting kubeview-mcp from: ${indexPath}`, colors.green);
-    const { main } = await import(`file://${indexPath}`);
+    log(`🚀 Starting kubeview-mcp from: ${finalIndexPath}`, colors.green);
+    const { main } = await import(`file://${finalIndexPath}`);
     await main();
   } catch (runError) {
     error('❌ Failed to start kubeview-mcp:');
