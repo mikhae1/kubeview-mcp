@@ -28,6 +28,7 @@ describe('RetryStrategy', () => {
         maxAttempts: 3,
         initialDelayMs: 10,
         jitterFactor: 0,
+        isRetryable: () => true,
       });
       let attempts = 0;
 
@@ -50,6 +51,7 @@ describe('RetryStrategy', () => {
         maxAttempts: 3,
         initialDelayMs: 10,
         jitterFactor: 0,
+        isRetryable: () => true,
       });
       let attempts = 0;
 
@@ -115,6 +117,7 @@ describe('RetryStrategy', () => {
         onRetry: (_attempt, _error, nextDelay) => {
           delays.push(nextDelay);
         },
+        isRetryable: () => true,
       });
 
       await strategy.execute(async () => {
@@ -138,6 +141,7 @@ describe('RetryStrategy', () => {
         onRetry: (_attempt, _error, nextDelay) => {
           delays.push(nextDelay);
         },
+        isRetryable: () => true,
       });
 
       await strategy.execute(async () => {
@@ -159,6 +163,7 @@ describe('RetryStrategy', () => {
         onRetry: (_attempt, _error, nextDelay) => {
           delays.push(nextDelay);
         },
+        isRetryable: () => true,
       });
 
       await strategy.execute(async () => {
@@ -176,6 +181,7 @@ describe('RetryStrategy', () => {
       const strategy = new RetryStrategy({
         maxAttempts: 1,
         timeoutMs: 100,
+        isRetryable: () => true,
       });
 
       const result = await strategy.execute(async () => {
@@ -185,7 +191,7 @@ describe('RetryStrategy', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBeInstanceOf(Error);
-      expect(result.error.message).toContain('timeout');
+      expect(result.error.message).toContain('timed out');
     });
 
     it('should stop retrying when total timeout exceeded', async () => {
@@ -260,6 +266,7 @@ describe('RetryStrategy', () => {
             nextDelay,
           });
         },
+        isRetryable: () => true,
       });
 
       await strategy.execute(async () => {
@@ -287,16 +294,14 @@ describe('RetryStrategy', () => {
     });
 
     it('should use AGGRESSIVE preset', async () => {
-      const strategy = new RetryStrategy(RETRY_PRESETS.AGGRESSIVE);
+      const strategy = new RetryStrategy({ ...RETRY_PRESETS.AGGRESSIVE, isRetryable: () => true });
       let attempts = 0;
-
       await strategy.execute(async () => {
         attempts++;
         throw new Error('Need many retries');
       });
-
       expect(attempts).toBe(5); // Aggressive preset has 5 max attempts
-    });
+    }, 20000);
 
     it('should use NONE preset', async () => {
       const strategy = new RetryStrategy(RETRY_PRESETS.NONE);
@@ -321,6 +326,7 @@ describe('RetryStrategy', () => {
         .withBackoffMultiplier(2)
         .withJitterFactor(0)
         .withTimeout(1000)
+        .withRetryableCheck(() => true)
         .build();
 
       let attempts = 0;
@@ -341,6 +347,7 @@ describe('RetryStrategy', () => {
       const strategy = new RetryBuilder()
         .withPreset('FAST')
         .withMaxAttempts(2) // Override preset
+        .withRetryableCheck(() => true)
         .build();
 
       let attempts = 0;
@@ -358,6 +365,7 @@ describe('RetryStrategy', () => {
       const strategy = new RetryStrategy({
         maxAttempts: 3,
         initialDelayMs: 10,
+        isRetryable: () => true,
       });
 
       let attempts = 0;

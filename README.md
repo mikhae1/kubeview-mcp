@@ -1,235 +1,229 @@
-# Kubernetes MCP Server
+# KubeView MCP – Kubernetes Model Context Protocol Server
 
-A Model Context Protocol (MCP) server that provides intelligent debugging and analysis capabilities for Kubernetes clusters, designed for integration with Cursor IDE.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8+-blue)](https://www.typescriptlang.org/)
 
-## Features
+**KubeView MCP** is a **read-only Model Context Protocol (MCP) server** that exposes rich, AI-ready operations for Kubernetes clusters. Paired with tools like **Cursor IDE** or Chat-based assistants, it lets you inspect, analyse and debug your cluster through natural-language commands while guaranteeing zero write access.
 
-### Implemented Features ✅
+---
 
-- **MCP Server Foundation**
-  - Core MCP server implementation with stdio transport
-  - JSON-RPC 2.0 message handling
-  - Tool registration and execution system
-  - Resource management
-  - Plugin architecture for extensibility
-  - Winston-based logging system
-  - Graceful shutdown handling
+## Table of Contents
 
-- **Kubernetes Client Module**
-  - Complete authentication support (kubeconfig, in-cluster, bearer token)
-  - Context management and switching
-  - Resource operations for pods, services, deployments, configmaps, secrets
-  - Custom Resource Definition (CRD) support
-  - Comprehensive error handling and logging
+- [KubeView MCP – Kubernetes Model Context Protocol Server](#kubeview-mcp--kubernetes-model-context-protocol-server)
+  - [Table of Contents](#table-of-contents)
+  - [✨ Features](#-features)
+  - [🚀 Quick Start](#-quick-start)
+    - [Prerequisites](#prerequisites)
+    - [Installation](#installation)
+    - [Build & Run](#build--run)
+  - [📟 CLI Reference](#-cli-reference)
+    - [Resource Management](#resource-management)
+    - [Storage & Persistence](#storage--persistence)
+    - [Monitoring & Observability](#monitoring--observability)
+    - [Generic Resource Tool](#generic-resource-tool)
+  - [🪄 Helm Integration](#-helm-integration)
+    - [Core Operations](#core-operations)
+    - [Configuration & Values](#configuration--values)
+    - [Helm ↔ Kubernetes Bridge](#helm--kubernetes-bridge)
+      - [Example – list all Helm releases](#example--list-all-helm-releases)
+  - [Argo Integration](#argo-integration)
+  - [ArgoCD Integration](#argocd-integration)
+  - [💡 Usage Examples](#-usage-examples)
+  - [🤝 Contributing](#-contributing)
+  - [📄 License](#-license)
+  - [🙏 Acknowledgments](#-acknowledgments)
 
-- **Connection Pooling & Multi-Cluster Support**
-  - High-performance connection pooling for API clients
-  - Connection reuse and lifecycle management
-  - Multi-cluster connection management
-  - Load balancing strategies (round-robin, least-connections, weighted, random)
-  - Automatic health monitoring and failover
-  - Connection warm-up and idle management
-  - Real-time pool statistics and monitoring
+---
 
-### Planned Features 🚧
+## ✨ Features
 
-- Core Kubernetes tools (list pods, services, deployments)
-- Log streaming and filtering
-- Intelligent analysis with LLM integration
-- Pattern recognition for common issues
-- Team collaboration features
+• **Kubernetes Resources** – Read-only access to Pods, Services, Deployments, Namespaces, ConfigMaps, Secrets, PVCs and more.
+• **Helm Support** – Deep inspection of Helm releases including manifests, values, hooks and history.
+• **Argo & ArgoCD Integration** – Seamlessly interact with Argo Workflows and ArgoCD applications.
+• **Advanced Storage Analysis** – Diagnose PV/PVC issues with smart binding & reclaim-policy checks.
+• **Robust Monitoring** – CPU / memory metrics out-of-the-box, optionally enriched with Prometheus data.
+• **Log Streaming** – Tail or grep container logs directly from your AI assistant.
+• **Cluster Events** – Filter and analyse live Kubernetes events.
 
-## Installation
+---
 
-```bash
-# Install dependencies
-npm install
-
-# Build the project
-npm run build
-
-# Run tests
-npm test
-```
-
-## Usage
-
-### Basic Usage
-
-```bash
-# Start the MCP server
-npm start
-
-# Run in development mode with hot reload
-npm run dev
-```
-
-### Cursor IDE Integration
-
-To use this MCP server with Cursor IDE:
-
-```bash
-# Quick setup (recommended)
-npm run setup:cursor
-
-npm run build
-```
-
-For detailed setup instructions, see:
-- [Cursor Setup Guide](docs/CURSOR_SETUP.md) - Complete setup and configuration guide
-- [Quick Reference](docs/CURSOR_QUICK_REFERENCE.md) - Common commands and usage patterns
-
-### Using Connection Pooling
-
-```typescript
-import { KubernetesClient } from 'kube-mcp';
-
-// Enable connection pooling for better performance
-const client = new KubernetesClient({
-  enableConnectionPooling: true,
-  connectionPoolConfig: {
-    minConnections: 2,
-    maxConnections: 10,
-    healthCheckInterval: 60000
-  }
-});
-
-// Use the client normally - connections are pooled automatically
-const pods = await client.resources.pod.list({ namespace: 'default' });
-```
-
-### Multi-Cluster Management
-
-```typescript
-import { ConnectionManager, LoadBalancingStrategy } from 'kube-mcp';
-
-const manager = new ConnectionManager({
-  loadBalancingStrategy: LoadBalancingStrategy.ROUND_ROBIN,
-  enableFailover: true
-});
-
-// Add multiple clusters
-await manager.addCluster({
-  name: 'production',
-  kubeConfigFactory: () => loadKubeConfig('prod')
-});
-
-await manager.addCluster({
-  name: 'staging',
-  kubeConfigFactory: () => loadKubeConfig('staging')
-});
-
-// Connections are automatically load balanced
-const { cluster, connection } = await manager.acquire();
-```
-
-For detailed connection pooling documentation, see [docs/ConnectionPooling.md](docs/ConnectionPooling.md).
-
-## Architecture
-
-### Core Components
-
-1. **MCPServer** (`src/server/MCPServer.ts`)
-   - Main server class implementing the MCP protocol
-   - Handles stdio communication with Cursor
-   - Manages tool and resource registration
-   - Provides plugin system for extensibility
-
-2. **KubernetesClient** (`src/kubernetes/KubernetesClient.ts`)
-   - High-level interface for Kubernetes API interactions
-   - Supports multiple authentication methods
-   - Optional connection pooling for performance
-   - Context management and switching
-
-3. **Connection Pooling** (`src/kubernetes/ConnectionPool.ts`)
-   - Manages pools of API client connections
-   - Health monitoring and automatic recovery
-   - Configurable pool sizes and timeouts
-   - Event-based monitoring and statistics
-
-4. **Plugin System**
-   - Allows extending server functionality
-   - Example: `src/plugins/SamplePlugin.ts`
-   - Plugins can register tools, resources, and handlers
-
-5. **Testing**
-   - Comprehensive unit tests for all components
-   - Integration tests for stdio communication
-   - JSON-RPC 2.0 protocol compliance tests
-   - Connection pooling and multi-cluster tests
-
-## Development
+## 🚀 Quick Start
 
 ### Prerequisites
 
-- Node.js >= 18.0.0
-- TypeScript
-- npm or yarn
+- **Node.js ≥ 18**
+- **npm** (or **yarn/pnpm**) for dependency management
+- Access to a **Kubernetes cluster** with a valid *kubeconfig*
+- **Cursor IDE** (or another MCP-compatible client) for interactive use
 
-### Project Structure
+### Installation
 
-```
-kube-mcp/
-├── src/
-│   ├── index.ts           # Main entry point
-│   ├── server/
-│   │   └── MCPServer.ts   # Core MCP server implementation
-│   └── plugins/
-│       └── SamplePlugin.ts # Example plugin
-├── tests/
-│   └── server/
-│       ├── MCPServer.test.ts            # Unit tests
-│       └── MCPServer.integration.test.ts # Integration tests
-├── package.json
-├── tsconfig.json
-└── README.md
+```bash
+# Clone the repository
+$ git clone https://github.com/mikhae1/kubeview-mcp.git
+$ cd kubeview-mcp
+
+# Install dependencies
+$ npm install
+
+# Generate local configuration for Cursor IDE & Claude
+$ npm run setup
 ```
 
-### Available Scripts
+### Build & Run
 
-- `npm run build` - Build TypeScript to JavaScript
-- `npm run dev` - Run in development mode with hot reload
-- `npm start` - Start the production server
-- `npm test` - Run all tests
-- `npm run test:watch` - Run tests in watch mode
-- `npm run lint` - Lint TypeScript files
-- `npm run format` - Format code with Prettier
+```bash
+# Compile TypeScript → JavaScript
+$ npm run build
 
-## Plugin Development
-
-To create a new plugin:
-
-1. Implement the `MCPPlugin` interface
-2. Register tools and resources in the `initialize` method
-3. Optionally implement `shutdown` for cleanup
-
-Example:
-
-```typescript
-import { MCPPlugin, MCPServer } from '../server/MCPServer.js';
-
-export class MyPlugin implements MCPPlugin {
-  name = 'my-plugin';
-  version = '1.0.0';
-
-  async initialize(server: MCPServer): Promise<void> {
-    // Register tools and resources
-  }
-
-  async shutdown(): Promise<void> {
-    // Cleanup
-  }
-}
+# Start the MCP server
+$ npm start
 ```
 
-## License
+The server will automatically locate your *kubeconfig* and use the current k8s context for all operations.
 
-MIT License - see LICENSE file for details
+---
 
-## Contributing
+## 📟 CLI Reference
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+All commands are invoked through the project-local helper:
 
-## Roadmap
+```bash
+npm run command -- <tool_name> [tool options]
+```
 
-See [tasks/tasks.json](tasks/tasks.json) for the detailed development roadmap and task breakdown.
+### Resource Management
+
+| Tool             | Description                                               |
+| ---------------- | --------------------------------------------------------- |
+| `get_pods`       | List / filter pods with detailed phase & container state |
+| `get_services`   | Discover services and their exposed endpoints            |
+| `get_deployments`| Inspect deployment rollout status & spec                |
+| `get_ingresses`  | View ingresses and their routing rules                    |
+| `get_configmaps` | View ConfigMaps (with sensitive data automatically redacted) |
+| `get_secrets`    | Read-only secret inspector with built-in sanitisation    |
+| `get_namespaces` | Enumerate namespaces in the cluster                      |
+
+### Storage & Persistence
+
+| Tool                           | Description                                                  |
+| ------------------------------ | ------------------------------------------------------------ |
+| `get_persistent_volumes`       | Analyse PVs and detect reclaim / capacity issues            |
+| `get_persistent_volume_claims` | Inspect PVC binding, access modes & storage-class details   |
+
+### Monitoring & Observability
+
+| Tool            | Description                                                   |
+| --------------- | ------------------------------------------------------------- |
+| `get_metrics`   | Cluster-wide CPU & memory metrics (Prometheus optional)      |
+| `get_pod_metrics` | Fine-grained metrics for individual pods                     |
+| `get_events`    | Stream or filter recent cluster events                       |
+| `pod_logs`      | Tail container logs with regex / since-time filters          |
+
+### Generic Resource Tool
+
+| Tool           | Description                               |
+| -------------- | ----------------------------------------- |
+| `get_resource` | Inspect any Kubernetes resource by GVR    |
+
+---
+
+## 🪄 Helm Integration
+
+KubeView MCP ships with a dedicated **HelmToolsPlugin** bringing first-class Helm introspection.
+
+### Core Operations
+
+| Tool         | Description                                                |
+| ------------ | ---------------------------------------------------------- |
+| `helm_list`  | List releases across all namespaces with status & revision |
+| `helm_status`| Full release status (history, manifest, values)            |
+| `helm_history`| Complete upgrade / rollback history                        |
+
+### Configuration & Values
+
+| Tool               | Description                                   |
+| ------------------ | --------------------------------------------- |
+| `helm_get_values`  | Rendered values.yaml for a release            |
+| `helm_get_manifest`| Complete aggregated Kubernetes manifest       |
+| `helm_get_notes`   | Chart installation notes & post-deploy hints  |
+| `helm_get_hooks`   | Pre / post hooks configured by the chart      |
+
+### Helm ↔ Kubernetes Bridge
+
+| Tool                       | Description                                                         |
+| -------------------------- | ------------------------------------------------------------------- |
+| `helm_get_resources`       | Discover / categorise all resources created by a release            |
+| `helm_list_with_resources` | Enhanced `helm_list` that bundles the above analysis for each release |
+
+#### Example – list all Helm releases
+
+```bash
+npm run command -- helm_list
+```
+
+---
+##  Argo Integration
+
+The **ArgoToolsPlugin** provides tools for interacting with Argo Workflows.
+
+| Tool | Description |
+| --- | --- |
+| `argo_get`  | Get details about a workflow
+| `argo_list` | List all Argo Workflows |
+| `argo_logs` | Get logs from an Argo Workflow |
+| `argo_cron_list` | List all Argo Cron Workflows |
+
+## ArgoCD Integration
+
+The **ArgoCDToolsPlugin** provides tools for interacting with ArgoCD.
+
+| Tool | Description |
+| --- | --- |
+| `argocd_app_list` | List all ArgoCD applications |
+| `argocd_app_get` | Get a specific ArgoCD application |
+| `argocd_app_history` | Get the history of an ArgoCD application |
+| `argocd_app_logs` | Get the logs of an ArgoCD application |
+| `argocd_app_resources` | Get the resources of an ArgoCD application |
+
+---
+
+## 💡 Usage Examples
+
+Ask your assistant:
+
+> *“Show me the details of the **nginx** deployment in the **web** namespace.”*
+
+KubeView MCP will execute `get_resource` under the hood and return a structured JSON response that your assistant converts into a readable answer.
+
+> *“List all pods in the **default** namespace and show their CPU and memory usage.”*
+
+This will trigger the `get_pods` and `get_pod_metrics` tools, combining their output to provide a comprehensive view of your pods' resource consumption.
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repo
+2. Create a feature branch: `git checkout -b feat/my-awesome-feature`
+3. Commit your changes: `git commit -m "feat: add my awesome feature"`
+4. Push to GitHub: `git push origin feat/my-awesome-feature`
+5. Open a Pull Request – thank you!
+
+> 💡 Run `npm run lint` and `npm run test` before opening a PR.
+
+---
+
+## 📄 License
+
+This project is released under the MIT License – see [LICENSE](LICENSE).
+
+---
+
+## 🙏 Acknowledgments
+
+- [Model Context Protocol SDK](https://github.com/modelcontextprotocol/sdk)
+- [Kubernetes JavaScript Client](https://github.com/kubernetes-client/javascript)
+- [Winston](https://github.com/winstonjs/winston)
+- [TypeScript](https://www.typescriptlang.org/)

@@ -13,7 +13,7 @@ import { Logger } from 'winston';
 export class KubernetesError extends Error {
   public readonly code: string;
   public readonly statusCode?: number;
-  public readonly details?: Record<string, any>;
+  public readonly details: Record<string, any>;
   public readonly retryable: boolean;
   public readonly timestamp: Date;
 
@@ -29,7 +29,7 @@ export class KubernetesError extends Error {
     this.code = code;
     this.statusCode = statusCode;
     this.retryable = retryable;
-    this.details = details;
+    this.details = details || {};
     this.timestamp = new Date();
 
     // Ensure proper prototype chain for instanceof checks
@@ -42,7 +42,7 @@ export class KubernetesError extends Error {
  */
 export class AuthenticationError extends KubernetesError {
   constructor(message: string, details?: Record<string, any>) {
-    super(message, 'AUTHENTICATION_ERROR', 401, false, details);
+    super(message, 'AUTHENTICATION_ERROR', 401, false, details || {});
     this.name = 'AuthenticationError';
     Object.setPrototypeOf(this, AuthenticationError.prototype);
   }
@@ -53,7 +53,7 @@ export class AuthenticationError extends KubernetesError {
  */
 export class AuthorizationError extends KubernetesError {
   constructor(message: string, details?: Record<string, any>) {
-    super(message, 'AUTHORIZATION_ERROR', 403, false, details);
+    super(message, 'AUTHORIZATION_ERROR', 403, false, details || {});
     this.name = 'AuthorizationError';
     Object.setPrototypeOf(this, AuthorizationError.prototype);
   }
@@ -64,7 +64,7 @@ export class AuthorizationError extends KubernetesError {
  */
 export class ResourceNotFoundError extends KubernetesError {
   constructor(message: string, details?: Record<string, any>) {
-    super(message, 'RESOURCE_NOT_FOUND', 404, false, details);
+    super(message, 'RESOURCE_NOT_FOUND', 404, false, details || {});
     this.name = 'ResourceNotFoundError';
     Object.setPrototypeOf(this, ResourceNotFoundError.prototype);
   }
@@ -75,7 +75,7 @@ export class ResourceNotFoundError extends KubernetesError {
  */
 export class ResourceConflictError extends KubernetesError {
   constructor(message: string, details?: Record<string, any>) {
-    super(message, 'RESOURCE_CONFLICT', 409, false, details);
+    super(message, 'RESOURCE_CONFLICT', 409, false, details || {});
     this.name = 'ResourceConflictError';
     Object.setPrototypeOf(this, ResourceConflictError.prototype);
   }
@@ -86,7 +86,7 @@ export class ResourceConflictError extends KubernetesError {
  */
 export class ValidationError extends KubernetesError {
   constructor(message: string, details?: Record<string, any>) {
-    super(message, 'VALIDATION_ERROR', 400, false, details);
+    super(message, 'VALIDATION_ERROR', 400, false, details || {});
     this.name = 'ValidationError';
     Object.setPrototypeOf(this, ValidationError.prototype);
   }
@@ -97,7 +97,7 @@ export class ValidationError extends KubernetesError {
  */
 export class ServerUnavailableError extends KubernetesError {
   constructor(message: string, details?: Record<string, any>) {
-    super(message, 'SERVER_UNAVAILABLE', 503, true, details);
+    super(message, 'SERVER_UNAVAILABLE', 503, true, details || {});
     this.name = 'ServerUnavailableError';
     Object.setPrototypeOf(this, ServerUnavailableError.prototype);
   }
@@ -108,7 +108,7 @@ export class ServerUnavailableError extends KubernetesError {
  */
 export class TimeoutError extends KubernetesError {
   constructor(message: string, details?: Record<string, any>) {
-    super(message, 'TIMEOUT_ERROR', 408, true, details);
+    super(message, 'TIMEOUT_ERROR', 408, true, details || {});
     this.name = 'TimeoutError';
     Object.setPrototypeOf(this, TimeoutError.prototype);
   }
@@ -119,7 +119,7 @@ export class TimeoutError extends KubernetesError {
  */
 export class RateLimitError extends KubernetesError {
   constructor(message: string, retryAfter?: number, details?: Record<string, any>) {
-    super(message, 'RATE_LIMIT_ERROR', 429, true, { ...details, retryAfter });
+    super(message, 'RATE_LIMIT_ERROR', 429, true, { ...(details || {}), retryAfter });
     this.name = 'RateLimitError';
     Object.setPrototypeOf(this, RateLimitError.prototype);
   }
@@ -130,7 +130,7 @@ export class RateLimitError extends KubernetesError {
  */
 export class NetworkError extends KubernetesError {
   constructor(message: string, details?: Record<string, any>) {
-    super(message, 'NETWORK_ERROR', undefined, true, details);
+    super(message, 'NETWORK_ERROR', undefined, true, details || {});
     this.name = 'NetworkError';
     Object.setPrototypeOf(this, NetworkError.prototype);
   }
@@ -145,6 +145,7 @@ export function convertApiError(error: any): KubernetesError {
     const body = error.response.body;
     const statusCode = error.response.statusCode || error.statusCode;
     const message = body.message || body.reason || 'Unknown error';
+    const retryAfter = error.response.headers?.['retry-after'];
 
     const details = {
       kind: body.kind,
@@ -167,7 +168,6 @@ export function convertApiError(error: any): KubernetesError {
       case 422:
         return new ValidationError(message, details);
       case 429:
-        const retryAfter = error.response.headers?.['retry-after'];
         return new RateLimitError(message, retryAfter ? parseInt(retryAfter) : undefined, details);
       case 408:
         return new TimeoutError(message, details);
@@ -360,18 +360,42 @@ export function createContextualError(
   baseError: KubernetesError,
   context: ErrorContext,
 ): KubernetesError {
-  const enhancedDetails = {
-    ...baseError.details,
-    context,
+  const mergedDetails = {
+    ...(baseError.details || {}),
+    ...context,
   };
 
-  // Create a new error of the same type with enhanced details
+  // Special handling for RateLimitError (constructor: message, retryAfter, details)
+  if (baseError instanceof RateLimitError) {
+    const retryAfter = baseError.details?.retryAfter;
+    return new RateLimitError(baseError.message, retryAfter, mergedDetails);
+  }
+
+  // For subclasses with (message, details) signature
+  if (
+    baseError instanceof ValidationError ||
+    baseError instanceof AuthenticationError ||
+    baseError instanceof AuthorizationError ||
+    baseError instanceof ResourceNotFoundError ||
+    baseError instanceof ResourceConflictError ||
+    baseError instanceof ServerUnavailableError ||
+    baseError instanceof TimeoutError ||
+    baseError instanceof NetworkError
+  ) {
+    const ErrorClass = baseError.constructor as new (
+      message: string,
+      details?: Record<string, any>,
+    ) => KubernetesError;
+    return new ErrorClass(baseError.message, mergedDetails);
+  }
+
+  // For base KubernetesError (message, code, statusCode, retryable, details)
   const ErrorClass = baseError.constructor as typeof KubernetesError;
   return new ErrorClass(
     baseError.message,
     baseError.code,
     baseError.statusCode,
     baseError.retryable,
-    enhancedDetails,
+    mergedDetails,
   );
 }

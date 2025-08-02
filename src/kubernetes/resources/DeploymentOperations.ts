@@ -1,71 +1,72 @@
-import { V1Deployment, V1DeploymentList, V1DeploymentStatus, Watch } from '@kubernetes/client-node';
+import * as k8s from '@kubernetes/client-node';
 import {
   BaseResourceOperations,
   ResourceOperationOptions,
   WatchCallback,
   WatchEventType,
-} from '../ResourceOperations';
-import { KubernetesClient } from '../KubernetesClient';
+} from '../BaseResourceOperations.js';
+import { KubernetesClient } from '../KubernetesClient.js';
 
 /**
  * Deployment-specific operation options
  */
 export interface DeploymentOperationOptions extends ResourceOperationOptions {
   /**
-   * Number of replicas to scale to
+   * Number of seconds to wait for deployment to be ready
    */
-  replicas?: number;
-
-  /**
-   * Strategy for rolling updates
-   */
-  strategy?: 'RollingUpdate' | 'Recreate';
-
-  /**
-   * Maximum number of pods that can be unavailable during update
-   */
-  maxUnavailable?: number | string;
-
-  /**
-   * Maximum number of pods that can be created above the desired replica count
-   */
-  maxSurge?: number | string;
+  timeoutSeconds?: number;
 }
 
 /**
- * Deployment operations implementation
+ * Deployment operations implementation - Read-only operations
  */
-export class DeploymentOperations extends BaseResourceOperations<V1Deployment> {
+export class DeploymentOperations extends BaseResourceOperations<k8s.V1Deployment> {
   constructor(client: KubernetesClient) {
     super(client, 'Deployment');
   }
 
   /**
-   * Create a new deployment
+   * @throws {Error} This operation is not supported in read-only mode
    */
   async create(
-    deployment: V1Deployment,
-    options?: ResourceOperationOptions,
-  ): Promise<V1Deployment> {
-    try {
-      const namespace = options?.namespace || deployment.metadata?.namespace || 'default';
-      const response = await this.client.apps.createNamespacedDeployment({
-        namespace,
-        body: deployment,
-      });
-      this.logger?.info(
-        `Created deployment '${deployment.metadata?.name}' in namespace '${namespace}'`,
-      );
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Create', deployment.metadata?.name);
-    }
+    _deployment: k8s.V1Deployment,
+    _options?: ResourceOperationOptions,
+  ): Promise<k8s.V1Deployment> {
+    throw new Error('Create operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async update(
+    _deployment: k8s.V1Deployment,
+    _options?: ResourceOperationOptions,
+  ): Promise<k8s.V1Deployment> {
+    throw new Error('Update operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async patch(
+    _name: string,
+    _patch: any,
+    _options?: ResourceOperationOptions,
+  ): Promise<k8s.V1Deployment> {
+    throw new Error('Patch operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async delete(_name: string, _options?: ResourceOperationOptions): Promise<void> {
+    throw new Error('Delete operation is not supported in read-only mode');
   }
 
   /**
    * Get a deployment by name
    */
-  async get(name: string, options?: ResourceOperationOptions): Promise<V1Deployment> {
+  async get(name: string, options?: ResourceOperationOptions): Promise<k8s.V1Deployment> {
     try {
       const namespace = options?.namespace || 'default';
       const response = await this.client.apps.readNamespacedDeployment({
@@ -79,70 +80,9 @@ export class DeploymentOperations extends BaseResourceOperations<V1Deployment> {
   }
 
   /**
-   * Update a deployment
-   */
-  async update(
-    deployment: V1Deployment,
-    options?: ResourceOperationOptions,
-  ): Promise<V1Deployment> {
-    try {
-      const namespace = options?.namespace || deployment.metadata?.namespace || 'default';
-      const name = deployment.metadata?.name;
-      if (!name) {
-        throw new Error('Deployment name is required for update');
-      }
-      const response = await this.client.apps.replaceNamespacedDeployment({
-        name,
-        namespace,
-        body: deployment,
-      });
-      this.logger?.info(`Updated deployment '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Update', deployment.metadata?.name);
-    }
-  }
-
-  /**
-   * Patch a deployment
-   */
-  async patch(name: string, patch: any, options?: ResourceOperationOptions): Promise<V1Deployment> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const response = await this.client.apps.patchNamespacedDeployment({
-        name,
-        namespace,
-        body: patch,
-      });
-      this.logger?.info(`Patched deployment '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Patch', name);
-    }
-  }
-
-  /**
-   * Delete a deployment
-   */
-  async delete(name: string, options?: ResourceOperationOptions): Promise<void> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const deleteOptions = this.buildDeleteOptions(options);
-      await this.client.apps.deleteNamespacedDeployment({
-        name,
-        namespace,
-        body: deleteOptions,
-      });
-      this.logger?.info(`Deleted deployment '${name}' from namespace '${namespace}'`);
-    } catch (error) {
-      this.handleApiError(error, 'Delete', name);
-    }
-  }
-
-  /**
    * List deployments
    */
-  async list(options?: ResourceOperationOptions): Promise<V1DeploymentList> {
+  async list(options?: ResourceOperationOptions): Promise<k8s.V1DeploymentList> {
     try {
       const namespace = options?.namespace;
       const listOptions = this.buildListOptions(options);
@@ -188,9 +128,9 @@ export class DeploymentOperations extends BaseResourceOperations<V1Deployment> {
   /**
    * Watch deployments for changes
    */
-  watch(callback: WatchCallback<V1Deployment>, options?: ResourceOperationOptions): () => void {
+  watch(callback: WatchCallback<k8s.V1Deployment>, options?: ResourceOperationOptions): () => void {
     const namespace = options?.namespace;
-    const watch = new Watch(this.client.kubeConfig);
+    const watch = new k8s.Watch(this.client.kubeConfig);
     let aborted = false;
 
     const startWatch = async () => {
@@ -198,7 +138,7 @@ export class DeploymentOperations extends BaseResourceOperations<V1Deployment> {
         const req = await watch.watch(
           `/apis/apps/v1/${namespace ? `namespaces/${namespace}/` : ''}deployments`,
           this.buildListOptions(options),
-          (type: string, obj: V1Deployment) => {
+          (type: string, obj: k8s.V1Deployment) => {
             if (!aborted) {
               callback({
                 type: type as WatchEventType,
@@ -238,186 +178,117 @@ export class DeploymentOperations extends BaseResourceOperations<V1Deployment> {
   }
 
   /**
-   * Scale a deployment
-   */
-  async scale(
-    name: string,
-    replicas: number,
-    options?: ResourceOperationOptions,
-  ): Promise<V1Deployment> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const scalePatch = {
-        spec: {
-          replicas: replicas,
-        },
-      };
-
-      const response = await this.patch(name, scalePatch, options);
-      this.logger?.info(
-        `Scaled deployment '${name}' to ${replicas} replicas in namespace '${namespace}'`,
-      );
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Scale', name);
-    }
-  }
-
-  /**
-   * Restart a deployment by updating its template annotations
-   */
-  async restart(name: string, options?: ResourceOperationOptions): Promise<V1Deployment> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const restartPatch = {
-        spec: {
-          template: {
-            metadata: {
-              annotations: {
-                'kubectl.kubernetes.io/restartedAt': new Date().toISOString(),
-              },
-            },
-          },
-        },
-      };
-
-      const response = await this.patch(name, restartPatch, options);
-      this.logger?.info(`Restarted deployment '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Restart', name);
-    }
-  }
-
-  /**
    * Get deployment status
    */
   async getStatus(
     name: string,
     options?: ResourceOperationOptions,
-  ): Promise<V1DeploymentStatus | undefined> {
+  ): Promise<k8s.V1DeploymentStatus | undefined> {
     try {
-      const deployment = await this.get(name, options);
-      return deployment.status;
+      const namespace = options?.namespace || 'default';
+      const response = await this.client.apps.readNamespacedDeploymentStatus({
+        name,
+        namespace,
+      });
+      return response.status;
     } catch (error) {
       this.handleApiError(error, 'GetStatus', name);
     }
   }
 
   /**
-   * Update deployment image
-   */
-  async updateImage(
-    name: string,
-    containerName: string,
-    newImage: string,
-    options?: ResourceOperationOptions,
-  ): Promise<V1Deployment> {
-    try {
-      const deployment = await this.get(name, options);
-
-      if (!deployment.spec?.template?.spec?.containers) {
-        throw new Error(`No containers found in deployment '${name}'`);
-      }
-
-      const container = deployment.spec.template.spec.containers.find(
-        (c) => c.name === containerName,
-      );
-      if (!container) {
-        throw new Error(`Container '${containerName}' not found in deployment '${name}'`);
-      }
-
-      container.image = newImage;
-
-      const response = await this.update(deployment, options);
-      this.logger?.info(
-        `Updated image for container '${containerName}' in deployment '${name}' to '${newImage}'`,
-      );
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'UpdateImage', name);
-    }
-  }
-
-  /**
-   * Rollback deployment to previous version
-   */
-  async rollback(
-    name: string,
-    options?: ResourceOperationOptions & { revision?: number },
-  ): Promise<V1Deployment> {
-    try {
-      // Get the deployment's ReplicaSets to find previous versions
-      const replicaSets = await this.client.apps.listNamespacedReplicaSet({
-        namespace: options?.namespace || 'default',
-        labelSelector: `app=${name}`,
-      });
-
-      if (!replicaSets.items || replicaSets.items.length < 2) {
-        throw new Error(`No previous versions found for deployment '${name}'`);
-      }
-
-      // Sort by creation timestamp to find the previous version
-      const sortedRS = replicaSets.items.sort((a, b) => {
-        const timeA = new Date(a.metadata?.creationTimestamp || 0).getTime();
-        const timeB = new Date(b.metadata?.creationTimestamp || 0).getTime();
-        return timeB - timeA;
-      });
-
-      // Get the previous ReplicaSet's pod template
-      const previousRS = sortedRS[1];
-      const deployment = await this.get(name, options);
-
-      if (previousRS.spec?.template) {
-        deployment.spec!.template = previousRS.spec.template;
-      }
-
-      const response = await this.update(deployment, options);
-      this.logger?.info(
-        `Rolled back deployment '${name}' in namespace '${options?.namespace || 'default'}'`,
-      );
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Rollback', name);
-    }
-  }
-
-  /**
    * Wait for deployment to be ready
    */
-  async waitForReady(
-    name: string,
-    options?: ResourceOperationOptions & { timeoutSeconds?: number },
-  ): Promise<boolean> {
-    const namespace = options?.namespace || 'default';
-    const timeout = (options?.timeoutSeconds || 300) * 1000; // Convert to milliseconds
+  async waitForReady(name: string, options?: DeploymentOperationOptions): Promise<boolean> {
+    const timeoutSeconds = options?.timeoutSeconds || 300;
     const startTime = Date.now();
-    const pollInterval = 2000; // 2 seconds
+    const timeoutTime = startTime + timeoutSeconds * 1000;
 
-    while (Date.now() - startTime < timeout) {
+    while (Date.now() < timeoutTime) {
       try {
-        const deployment = await this.get(name, options);
-        const status = deployment.status;
+        const namespace = options?.namespace || 'default';
+        const response = await this.client.apps.readNamespacedDeploymentStatus({
+          name,
+          namespace,
+        });
+        const status = response.status;
 
         if (
-          status?.readyReplicas === deployment.spec?.replicas &&
-          status?.updatedReplicas === deployment.spec?.replicas &&
-          status?.availableReplicas === deployment.spec?.replicas
+          status?.availableReplicas === status?.replicas &&
+          status?.updatedReplicas === status?.replicas &&
+          status?.readyReplicas === status?.replicas
         ) {
-          this.logger?.info(`Deployment '${name}' is ready in namespace '${namespace}'`);
           return true;
         }
 
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait 2 seconds before checking again
       } catch (error) {
-        // Continue polling if there's an error
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        this.logger?.error(`Error waiting for deployment '${name}' to be ready: ${error}`);
+        throw error;
       }
     }
 
-    this.logger?.warn(
-      `Timeout waiting for deployment '${name}' to be ready in namespace '${namespace}'`,
-    );
     return false;
+  }
+
+  /**
+   * Get a deployment with MCP tool-friendly formatting
+   */
+  async getFormatted(
+    name: string,
+    options?: ResourceOperationOptions,
+  ): Promise<{
+    resourceType: string;
+    metadata: any;
+    spec: any;
+    status: any;
+  }> {
+    try {
+      const deployment = await this.get(name, options);
+
+      return {
+        resourceType: 'deployment',
+        metadata: this.formatResourceMetadata(deployment),
+        spec: {
+          replicas: deployment.spec?.replicas,
+          selector: deployment.spec?.selector,
+          template: deployment.spec?.template,
+          strategy: deployment.spec?.strategy,
+          minReadySeconds: deployment.spec?.minReadySeconds,
+          revisionHistoryLimit: deployment.spec?.revisionHistoryLimit,
+          progressDeadlineSeconds: deployment.spec?.progressDeadlineSeconds,
+        },
+        status: {
+          ...this.formatResourceStatus(deployment),
+          replicas: deployment.status?.replicas,
+          updatedReplicas: deployment.status?.updatedReplicas,
+          readyReplicas: deployment.status?.readyReplicas,
+          availableReplicas: deployment.status?.availableReplicas,
+          unavailableReplicas: deployment.status?.unavailableReplicas,
+          observedGeneration: deployment.status?.observedGeneration,
+        },
+      };
+    } catch (error) {
+      this.handleApiError(error, 'GetFormatted', name);
+    }
+  }
+
+  private formatResourceMetadata(resource: any): any {
+    return {
+      name: resource.metadata?.name,
+      namespace: resource.metadata?.namespace,
+      uid: resource.metadata?.uid,
+      resourceVersion: resource.metadata?.resourceVersion,
+      generation: resource.metadata?.generation,
+      creationTimestamp: resource.metadata?.creationTimestamp,
+      labels: resource.metadata?.labels || {},
+      annotations: resource.metadata?.annotations || {},
+    };
+  }
+
+  private formatResourceStatus(resource: any): any {
+    return {
+      conditions: resource.status?.conditions || [],
+    };
   }
 }

@@ -346,4 +346,4 @@ When adding new features:
 
 ## License
 
-This module is part of the kube-mcp project.
+This module is part of the kubeview-mcp project.

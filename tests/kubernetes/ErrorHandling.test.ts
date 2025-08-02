@@ -366,7 +366,14 @@ describe('Error Handling', () => {
       const contextualError = createContextualError(baseError, context);
       expect(contextualError).toBeInstanceOf(ValidationError);
       expect(contextualError.message).toBe('Invalid resource');
-      expect(contextualError.details?.context).toEqual(context);
+      expect(contextualError.details?.operation).toBe('createPod');
+      expect(contextualError.details?.resource).toEqual({
+        kind: 'Pod',
+        name: 'my-pod',
+        namespace: 'default',
+      });
+      expect(contextualError.details?.cluster).toBe('production');
+      expect(contextualError.details?.user).toBe('admin');
     });
 
     it('should preserve original error details', () => {
@@ -380,7 +387,7 @@ describe('Error Handling', () => {
       const contextualError = createContextualError(baseError, context);
       expect(contextualError.details?.retryAfter).toBe(60);
       expect(contextualError.details?.originalDetail).toBe('test');
-      expect(contextualError.details?.context).toEqual(context);
+      expect(contextualError.details?.operation).toBe('listPods');
     });
   });
 });

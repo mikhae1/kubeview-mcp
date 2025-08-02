@@ -3,8 +3,9 @@ import { Logger } from 'winston';
 import { join } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
-import { ResourceOperations } from './ResourceOperations';
-import { ConnectionPool, ConnectionPoolConfig, ConnectionEntry } from './ConnectionPool';
+import { ResourceOperations } from './ResourceOperations.js';
+import type { ApiType, Configuration } from '@kubernetes/client-node';
+// import { URL } from 'url';
 
 /**
  * Configuration options for KubernetesClient
@@ -44,16 +45,6 @@ export interface KubernetesClientConfig {
    * Logger instance for debug output
    */
   logger?: Logger;
-
-  /**
-   * Enable connection pooling for API clients
-   */
-  enableConnectionPooling?: boolean;
-
-  /**
-   * Connection pool configuration
-   */
-  connectionPoolConfig?: ConnectionPoolConfig;
 }
 
 /**
@@ -77,14 +68,7 @@ export class KubernetesClient {
   private authMethod: AuthMethod;
   private logger?: Logger;
   private _resources: ResourceOperations;
-  private connectionPool?: ConnectionPool;
-  private pooledConnection?: ConnectionEntry;
-
-  // Cached API clients when using pooling
-  private cachedCoreV1Api?: k8s.CoreV1Api;
-  private cachedAppsV1Api?: k8s.AppsV1Api;
-  private cachedBatchV1Api?: k8s.BatchV1Api;
-  private cachedNetworkingV1Api?: k8s.NetworkingV1Api;
+  private _customObjectsApi?: k8s.CustomObjectsApi;
 
   constructor(private config: KubernetesClientConfig = {}) {
     this.logger = config.logger;
@@ -92,11 +76,9 @@ export class KubernetesClient {
     this.authMethod = this.detectAuthMethod();
     this.initializeClient();
 
-    if (config.enableConnectionPooling) {
-      this.initializeConnectionPool();
-    } else {
-      this.initializeApiClients();
-    }
+    this.config.skipTlsVerify = true;
+
+    this.initializeApiClients();
 
     this._resources = new ResourceOperations(this);
   }
@@ -231,45 +213,6 @@ export class KubernetesClient {
   }
 
   /**
-   * Initialize connection pool
-   */
-  private initializeConnectionPool(): void {
-    const contextName = this.getCurrentContext();
-    const poolConfig = {
-      ...this.config.connectionPoolConfig,
-      logger: this.logger,
-    };
-
-    this.connectionPool = new ConnectionPool(
-      contextName,
-      () => {
-        // Factory function to create new KubeConfig instances
-        const newKc = new k8s.KubeConfig();
-        switch (this.authMethod) {
-          case AuthMethod.IN_CLUSTER:
-            newKc.loadFromCluster();
-            break;
-          case AuthMethod.TOKEN:
-            this.initializeTokenConfig();
-            Object.assign(newKc, this.kc);
-            break;
-          case AuthMethod.KUBECONFIG:
-          default:
-            newKc.loadFromFile(this.getKubeConfigPath());
-            if (this.config.context) {
-              newKc.setCurrentContext(this.config.context);
-            }
-            break;
-        }
-        return newKc;
-      },
-      poolConfig,
-    );
-
-    this.logger?.info('Connection pooling enabled for Kubernetes client');
-  }
-
-  /**
    * Initialize API clients for different Kubernetes resources
    */
   private initializeApiClients(): void {
@@ -277,37 +220,6 @@ export class KubernetesClient {
     this.appsV1Api = this.kc.makeApiClient(k8s.AppsV1Api);
     this.batchV1Api = this.kc.makeApiClient(k8s.BatchV1Api);
     this.networkingV1Api = this.kc.makeApiClient(k8s.NetworkingV1Api);
-  }
-
-  /**
-   * Get a pooled connection
-   */
-  private async getPooledConnection(): Promise<ConnectionEntry> {
-    if (!this.connectionPool) {
-      throw new Error('Connection pooling is not enabled');
-    }
-
-    if (this.pooledConnection && this.pooledConnection.state === 'in-use') {
-      return this.pooledConnection;
-    }
-
-    this.pooledConnection = await this.connectionPool.acquire();
-    return this.pooledConnection;
-  }
-
-  /**
-   * Release the pooled connection
-   */
-  private releasePooledConnection(): void {
-    if (this.connectionPool && this.pooledConnection) {
-      this.connectionPool.release(this.pooledConnection);
-      this.pooledConnection = undefined;
-      // Clear cached API clients
-      this.cachedCoreV1Api = undefined;
-      this.cachedAppsV1Api = undefined;
-      this.cachedBatchV1Api = undefined;
-      this.cachedNetworkingV1Api = undefined;
-    }
   }
 
   /**
@@ -341,6 +253,50 @@ export class KubernetesClient {
   }
 
   /**
+   * Refresh the current context by reloading the kubeconfig file
+   * This ensures we always use the latest context when executing operations
+   */
+  public async refreshCurrentContext(): Promise<void> {
+    // Only refresh for kubeconfig-based authentication
+    if (this.authMethod !== AuthMethod.KUBECONFIG) {
+      this.logger?.debug('Skipping context refresh for non-kubeconfig authentication');
+      return;
+    }
+
+    try {
+      const kubeConfigPath = this.getKubeConfigPath();
+
+      if (!existsSync(kubeConfigPath)) {
+        this.logger?.warn(`Kubeconfig file not found at: ${kubeConfigPath} during refresh`);
+        return;
+      }
+
+      // Store the old context to detect changes
+      const oldContext = this.kc.getCurrentContext();
+
+      // Reload the kubeconfig file to get the latest context
+      this.kc.loadFromFile(kubeConfigPath);
+
+      const newContext = this.kc.getCurrentContext();
+
+      // If context changed, reinitialize API clients
+      if (oldContext !== newContext) {
+        this.initializeApiClients();
+        this.logger?.info(
+          `Context changed from '${oldContext}' to '${newContext}' - API clients reinitialized`,
+        );
+      } else {
+        this.logger?.debug(`Context unchanged: '${newContext}'`);
+      }
+    } catch (error) {
+      this.logger?.error(
+        `Failed to refresh current context: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      // Don't throw - we'll continue with the existing context
+    }
+  }
+
+  /**
    * Switch to a different context
    */
   public async switchContext(contextName: string): Promise<void> {
@@ -351,19 +307,8 @@ export class KubernetesClient {
       throw new Error(`Context not found: ${contextName}`);
     }
 
-    // Release current pooled connection if using pooling
-    if (this.connectionPool) {
-      this.releasePooledConnection();
-      await this.connectionPool.dispose();
-    }
-
     this.kc.setCurrentContext(contextName);
-
-    if (this.config.enableConnectionPooling) {
-      this.initializeConnectionPool();
-    } else {
-      this.initializeApiClients();
-    }
+    this.initializeApiClients();
 
     this.logger?.info(`Switched to context: ${contextName}`);
   }
@@ -380,28 +325,13 @@ export class KubernetesClient {
    */
   public async testConnection(): Promise<boolean> {
     try {
-      const api = await this.getCore();
-      await api.listNamespace();
+      await this.coreV1Api.listNamespace();
       this.logger?.debug('Successfully connected to Kubernetes API server');
       return true;
     } catch (error) {
       this.logger?.error(`Failed to connect to Kubernetes API server: ${error}`);
       return false;
-    } finally {
-      if (this.config.enableConnectionPooling) {
-        this.releasePooledConnection();
-      }
     }
-  }
-
-  /**
-   * Get connection pool statistics
-   */
-  public getPoolStats(): any {
-    if (!this.connectionPool) {
-      return null;
-    }
-    return this.connectionPool.stats;
   }
 
   /**
@@ -446,121 +376,20 @@ export class KubernetesClient {
     });
   }
 
-  // Getters for API clients (to be used by resource-specific methods)
-  private async getCore(): Promise<k8s.CoreV1Api> {
-    if (this.config.enableConnectionPooling) {
-      if (!this.cachedCoreV1Api) {
-        const connection = await this.getPooledConnection();
-        this.cachedCoreV1Api = connection.makeApiClient(k8s.CoreV1Api);
-      }
-      return this.cachedCoreV1Api;
-    }
-    return this.coreV1Api;
-  }
-
+  // Getters for API clients
   public get core(): k8s.CoreV1Api {
-    if (this.config.enableConnectionPooling) {
-      // For backwards compatibility, return a proxy that handles async
-      return new Proxy({} as k8s.CoreV1Api, {
-        get: (_target, prop) => {
-          return async (...args: any[]) => {
-            const api = await this.getCore();
-            const method = (api as any)[prop];
-            if (typeof method === 'function') {
-              return method.apply(api, args);
-            }
-            return method;
-          };
-        },
-      });
-    }
     return this.coreV1Api;
-  }
-
-  private async getApps(): Promise<k8s.AppsV1Api> {
-    if (this.config.enableConnectionPooling) {
-      if (!this.cachedAppsV1Api) {
-        const connection = await this.getPooledConnection();
-        this.cachedAppsV1Api = connection.makeApiClient(k8s.AppsV1Api);
-      }
-      return this.cachedAppsV1Api;
-    }
-    return this.appsV1Api;
   }
 
   public get apps(): k8s.AppsV1Api {
-    if (this.config.enableConnectionPooling) {
-      return new Proxy({} as k8s.AppsV1Api, {
-        get: (_target, prop) => {
-          return async (...args: any[]) => {
-            const api = await this.getApps();
-            const method = (api as any)[prop];
-            if (typeof method === 'function') {
-              return method.apply(api, args);
-            }
-            return method;
-          };
-        },
-      });
-    }
     return this.appsV1Api;
   }
 
-  private async getBatch(): Promise<k8s.BatchV1Api> {
-    if (this.config.enableConnectionPooling) {
-      if (!this.cachedBatchV1Api) {
-        const connection = await this.getPooledConnection();
-        this.cachedBatchV1Api = connection.makeApiClient(k8s.BatchV1Api);
-      }
-      return this.cachedBatchV1Api;
-    }
-    return this.batchV1Api;
-  }
-
   public get batch(): k8s.BatchV1Api {
-    if (this.config.enableConnectionPooling) {
-      return new Proxy({} as k8s.BatchV1Api, {
-        get: (_target, prop) => {
-          return async (...args: any[]) => {
-            const api = await this.getBatch();
-            const method = (api as any)[prop];
-            if (typeof method === 'function') {
-              return method.apply(api, args);
-            }
-            return method;
-          };
-        },
-      });
-    }
     return this.batchV1Api;
-  }
-
-  private async getNetworking(): Promise<k8s.NetworkingV1Api> {
-    if (this.config.enableConnectionPooling) {
-      if (!this.cachedNetworkingV1Api) {
-        const connection = await this.getPooledConnection();
-        this.cachedNetworkingV1Api = connection.makeApiClient(k8s.NetworkingV1Api);
-      }
-      return this.cachedNetworkingV1Api;
-    }
-    return this.networkingV1Api;
   }
 
   public get networking(): k8s.NetworkingV1Api {
-    if (this.config.enableConnectionPooling) {
-      return new Proxy({} as k8s.NetworkingV1Api, {
-        get: (_target, prop) => {
-          return async (...args: any[]) => {
-            const api = await this.getNetworking();
-            const method = (api as any)[prop];
-            if (typeof method === 'function') {
-              return method.apply(api, args);
-            }
-            return method;
-          };
-        },
-      });
-    }
     return this.networkingV1Api;
   }
 
@@ -576,11 +405,96 @@ export class KubernetesClient {
   }
 
   /**
-   * Dispose of the client and clean up resources
+   * Returns a Kubernetes API client for the specified API constructor.
+   * This allows for accessing various Kubernetes APIs in a type-safe manner.
+   * @param apiClientConstructor The constructor of the API client to instantiate (e.g., k8s.CoreV1Api).
+   *                           It should conform to `new (config: Configuration) => T`.
+   * @returns An instance of the requested API client.
    */
-  public async dispose(): Promise<void> {
-    if (this.connectionPool) {
-      await this.connectionPool.dispose();
+  public getGenericApiClient<T extends ApiType>(
+    apiClientConstructor: new (config: Configuration) => T,
+  ): T {
+    return this.kc.makeApiClient(apiClientConstructor);
+  }
+
+  /**
+   * Makes a generic GET request to the Kubernetes API server.
+   * This is useful for accessing API endpoints not covered by specific client APIs (e.g., custom resources or aggregated APIs like metrics.k8s.io).
+   * @param path The API path to request (e.g., '/apis/metrics.k8s.io/v1beta1/nodes').
+   * @returns A promise that resolves with the API response.
+   * @throws Will throw an error if the request fails.
+   */
+  public async getRaw<T = any>(path: string): Promise<T> {
+    this.logger?.debug(`Making authenticated raw request to: ${path}`);
+
+    try {
+      // Use the customObjects API as a workaround for raw requests
+      // Since metrics are served by the metrics-server through custom resources
+      if (path.includes('metrics.k8s.io')) {
+        const group = 'metrics.k8s.io';
+        const version = 'v1beta1';
+
+        if (path.includes('/nodes')) {
+          return (await this.customObjects.listClusterCustomObject({
+            group: group,
+            version: version,
+            plural: 'nodes',
+          })) as T;
+        } else if (path.includes('/pods')) {
+          // Handle namespaced vs cluster-wide pod metrics
+          const namespacedMatch = path.match(/\/namespaces\/([\w-]+)\/pods/);
+          if (namespacedMatch) {
+            const namespace = namespacedMatch[1];
+            return (await this.customObjects.listNamespacedCustomObject({
+              group: group,
+              version: version,
+              namespace: namespace,
+              plural: 'pods',
+            })) as T;
+          } else {
+            return (await this.customObjects.listClusterCustomObject({
+              group: group,
+              version: version,
+              plural: 'pods',
+            })) as T;
+          }
+        }
+      }
+
+      // For non-metrics paths, throw an error explaining the limitation
+      throw new Error(
+        `Raw requests are only supported for metrics.k8s.io API paths. Attempted path: ${path}`,
+      );
+    } catch (error: any) {
+      this.logger?.error(`Error making raw request to ${path}: ${error.message}`);
+
+      // If it's a 403 error, provide more helpful debugging information
+      if (error.statusCode === 403 || (error.response && error.response.statusCode === 403)) {
+        this.logger?.error(
+          'Authentication failed - check that your kubeconfig is valid and you have the necessary permissions',
+        );
+        this.logger?.error(
+          'If using exec-based auth, ensure the authentication plugin is properly configured',
+        );
+      }
+
+      throw error;
     }
+  }
+
+  public get customObjects(): k8s.CustomObjectsApi {
+    if (!this._customObjectsApi) {
+      this._customObjectsApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
+    }
+    return this._customObjectsApi;
+  }
+
+  /**
+   * Sets whether to skip TLS verification for API requests
+   * @param skip True to skip TLS verification, false otherwise
+   */
+  public setSkipTlsVerify(skip: boolean): void {
+    this.config.skipTlsVerify = skip;
+    this.logger?.debug(`TLS verification set to: ${!skip}`);
   }
 }

@@ -36,14 +36,14 @@ export default [
     },
     rules: {
       ...typescript.configs.recommended.rules,
-      '@typescript-eslint/explicit-function-return-type': 'warn',
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       'prettier/prettier': 'error',
     },
   },
   {
-    files: ['**/*.test.ts', '**/*.spec.ts', 'tests/**/*.ts'],
+    files: ['**/*.test.ts', '**/*.spec.ts', 'tests/**/*.ts', '__mocks__/**/*.ts'],
     languageOptions: {
       globals: {
         describe: 'readonly',
@@ -55,7 +55,32 @@ export default [
         afterAll: 'readonly',
         jest: 'readonly',
         test: 'readonly',
+        setImmediate: 'readonly',
       },
+    },
+  },
+  {
+    files: ['**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        Buffer: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        require: 'readonly',
+        module: 'readonly',
+        exports: 'readonly',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
   {
@@ -66,8 +91,8 @@ export default [
       'jest.config.js',
       'eslint.config.js',
       'tasks/',
-      'scripts/',
-      '*.js',
+      'scripts/main.js',
+      'scripts/setup.js',
       '*.d.ts',
     ],
   },

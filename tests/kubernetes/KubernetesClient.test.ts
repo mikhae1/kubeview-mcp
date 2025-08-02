@@ -15,6 +15,8 @@ jest.mock('fs');
 
 describe('KubernetesClient', () => {
   let mockLogger: jest.Mocked<Logger>;
+  let mockKubeConfig: any;
+  let mockCoreV1Api: any;
 
   beforeEach(() => {
     // Reset all mocks
@@ -31,8 +33,8 @@ describe('KubernetesClient', () => {
     // Mock file system
     (existsSync as jest.Mock).mockReturnValue(true);
 
-    // Setup default mock implementations for KubeConfig instance methods
-    const mockKubeConfigInstance = {
+    // Setup mock KubeConfig
+    mockKubeConfig = {
       getCurrentContext: jest.fn().mockReturnValue('default'),
       getContexts: jest.fn().mockReturnValue([
         { name: 'default', cluster: 'default-cluster', user: 'default-user' },
@@ -57,7 +59,15 @@ describe('KubernetesClient', () => {
     };
 
     // Mock the KubeConfig constructor to return our mock instance
-    (k8s.KubeConfig as any).mockImplementation(() => mockKubeConfigInstance);
+    (k8s.KubeConfig as any).mockImplementation(() => mockKubeConfig);
+
+    // Mock CoreV1Api
+    mockCoreV1Api = {
+      listNamespace: jest.fn().mockResolvedValue({ body: { items: [] } }),
+    } as any;
+
+    // Mock k8s module
+    mockKubeConfig.makeApiClient.mockReturnValue(mockCoreV1Api);
   });
 
   describe('Constructor and Initialization', () => {
@@ -239,10 +249,11 @@ describe('KubernetesClient', () => {
       expect(mockInstance.setCurrentContext).toHaveBeenCalledWith('test');
     });
 
-    it('should throw error when switching to non-existent context', () => {
+    it('should throw error when switching to non-existent context', async () => {
       const client = new KubernetesClient();
-
-      expect(() => client.switchContext('non-existent')).toThrow('Context not found: non-existent');
+      await expect(client.switchContext('non-existent')).rejects.toThrow(
+        'Context not found: non-existent',
+      );
     });
   });
 
@@ -385,6 +396,91 @@ describe('KubernetesClient', () => {
       const mockInstance = (k8s.KubeConfig as any).mock.results[0].value;
       expect(mockInstance.loadFromFile).toHaveBeenCalledWith('/custom/config');
       expect(mockInstance.setCurrentContext).toHaveBeenCalledWith('test-context');
+    });
+  });
+
+  describe('refreshCurrentContext', () => {
+    it('should refresh context for kubeconfig-based authentication', async () => {
+      const client = new KubernetesClient({
+        kubeConfigPath: '/test/.kube/config',
+      });
+
+      // Mock context change
+      mockKubeConfig.getCurrentContext
+        .mockReturnValueOnce('old-context') // First call (store old context)
+        .mockReturnValueOnce('new-context'); // Second call (after reload)
+
+      await client.refreshCurrentContext();
+
+      expect(mockKubeConfig.loadFromFile).toHaveBeenCalledWith('/test/.kube/config');
+      expect(mockKubeConfig.makeApiClient).toHaveBeenCalled(); // API clients reinitialized
+    });
+
+    it('should skip refresh for in-cluster authentication', async () => {
+      const client = new KubernetesClient({
+        inCluster: true,
+      });
+
+      await client.refreshCurrentContext();
+
+      expect(mockKubeConfig.loadFromFile).not.toHaveBeenCalled();
+    });
+
+    it('should skip refresh for token-based authentication', async () => {
+      const client = new KubernetesClient({
+        bearerToken: 'test-token',
+        apiServerUrl: 'https://test.example.com',
+      });
+
+      await client.refreshCurrentContext();
+
+      expect(mockKubeConfig.loadFromFile).not.toHaveBeenCalled();
+    });
+
+    it('should handle missing kubeconfig file gracefully', async () => {
+      // First create client with existing config
+      const client = new KubernetesClient({
+        kubeConfigPath: '/existing/.kube/config',
+      });
+
+      // Clear previous calls
+      mockKubeConfig.loadFromFile.mockClear();
+
+      // Now mock file as missing during refresh
+      (existsSync as jest.Mock).mockReturnValue(false);
+
+      await expect(client.refreshCurrentContext()).resolves.not.toThrow();
+      expect(mockKubeConfig.loadFromFile).not.toHaveBeenCalled();
+    });
+
+    it('should handle loadFromFile errors gracefully', async () => {
+      const client = new KubernetesClient({
+        kubeConfigPath: '/test/.kube/config',
+      });
+
+      mockKubeConfig.loadFromFile.mockImplementation(() => {
+        throw new Error('Invalid config file');
+      });
+
+      await expect(client.refreshCurrentContext()).resolves.not.toThrow();
+    });
+
+    it('should not reinitialize API clients if context unchanged', async () => {
+      const client = new KubernetesClient({
+        kubeConfigPath: '/test/.kube/config',
+      });
+
+      // Mock unchanged context
+      mockKubeConfig.getCurrentContext.mockReturnValue('same-context');
+
+      // Clear previous makeApiClient calls from constructor
+      mockKubeConfig.makeApiClient.mockClear();
+
+      await client.refreshCurrentContext();
+
+      expect(mockKubeConfig.loadFromFile).toHaveBeenCalledWith('/test/.kube/config');
+      // API clients should not be reinitialized since context didn't change
+      expect(mockKubeConfig.makeApiClient).not.toHaveBeenCalled();
     });
   });
 });

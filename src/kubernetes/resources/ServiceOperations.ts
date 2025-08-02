@@ -4,11 +4,11 @@ import {
   ResourceOperationOptions,
   WatchCallback,
   WatchEventType,
-} from '../ResourceOperations';
-import { KubernetesClient } from '../KubernetesClient';
+} from '../BaseResourceOperations.js';
+import { KubernetesClient } from '../KubernetesClient.js';
 
 /**
- * Service operations implementation
+ * Service operations implementation - Read-only operations
  */
 export class ServiceOperations extends BaseResourceOperations<k8s.V1Service> {
   constructor(client: KubernetesClient) {
@@ -16,20 +16,41 @@ export class ServiceOperations extends BaseResourceOperations<k8s.V1Service> {
   }
 
   /**
-   * Create a new service
+   * @throws {Error} This operation is not supported in read-only mode
    */
-  async create(service: k8s.V1Service, options?: ResourceOperationOptions): Promise<k8s.V1Service> {
-    try {
-      const namespace = options?.namespace || service.metadata?.namespace || 'default';
-      const response = await this.client.core.createNamespacedService({
-        namespace,
-        body: service,
-      });
-      this.logger?.info(`Created service '${service.metadata?.name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Create', service.metadata?.name);
-    }
+  async create(
+    _service: k8s.V1Service,
+    _options?: ResourceOperationOptions,
+  ): Promise<k8s.V1Service> {
+    throw new Error('Create operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async update(
+    _service: k8s.V1Service,
+    _options?: ResourceOperationOptions,
+  ): Promise<k8s.V1Service> {
+    throw new Error('Update operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async patch(
+    _name: string,
+    _patch: any,
+    _options?: ResourceOperationOptions,
+  ): Promise<k8s.V1Service> {
+    throw new Error('Patch operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async delete(_name: string, _options?: ResourceOperationOptions): Promise<void> {
+    throw new Error('Delete operation is not supported in read-only mode');
   }
 
   /**
@@ -45,68 +66,6 @@ export class ServiceOperations extends BaseResourceOperations<k8s.V1Service> {
       return response;
     } catch (error) {
       this.handleApiError(error, 'Get', name);
-    }
-  }
-
-  /**
-   * Update a service
-   */
-  async update(service: k8s.V1Service, options?: ResourceOperationOptions): Promise<k8s.V1Service> {
-    try {
-      const namespace = options?.namespace || service.metadata?.namespace || 'default';
-      const name = service.metadata?.name;
-      if (!name) {
-        throw new Error('Service name is required for update');
-      }
-      const response = await this.client.core.replaceNamespacedService({
-        name,
-        namespace,
-        body: service,
-      });
-      this.logger?.info(`Updated service '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Update', service.metadata?.name);
-    }
-  }
-
-  /**
-   * Patch a service
-   */
-  async patch(
-    name: string,
-    patch: any,
-    options?: ResourceOperationOptions,
-  ): Promise<k8s.V1Service> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const response = await this.client.core.patchNamespacedService({
-        name,
-        namespace,
-        body: patch,
-      });
-      this.logger?.info(`Patched service '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Patch', name);
-    }
-  }
-
-  /**
-   * Delete a service
-   */
-  async delete(name: string, options?: ResourceOperationOptions): Promise<void> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const deleteOptions = this.buildDeleteOptions(options);
-      await this.client.core.deleteNamespacedService({
-        name,
-        namespace,
-        body: deleteOptions,
-      });
-      this.logger?.info(`Deleted service '${name}' from namespace '${namespace}'`);
-    } catch (error) {
-      this.handleApiError(error, 'Delete', name);
     }
   }
 
@@ -225,64 +184,100 @@ export class ServiceOperations extends BaseResourceOperations<k8s.V1Service> {
   }
 
   /**
-   * Update service status
+   * List services with MCP tool-friendly formatting
    */
-  async updateStatus(
-    name: string,
-    status: k8s.V1ServiceStatus,
-    options?: ResourceOperationOptions,
-  ): Promise<k8s.V1Service> {
+  async listFormatted(options?: ResourceOperationOptions): Promise<{
+    total: number;
+    namespace: string;
+    services: Array<{
+      metadata: any;
+      spec: any;
+      status: any;
+    }>;
+  }> {
     try {
-      const namespace = options?.namespace || 'default';
-      const service = await this.get(name, options);
-      service.status = status;
+      const result = await this.list(options);
+      const namespace = options?.namespace || 'all';
 
-      const response = await this.client.core.patchNamespacedServiceStatus({
-        name,
+      const services = result.items.map((service: any) => ({
+        metadata: this.formatResourceMetadata(service),
+        spec: {
+          type: service.spec?.type,
+          clusterIP: service.spec?.clusterIP,
+          externalIPs: service.spec?.externalIPs || [],
+          ports:
+            service.spec?.ports?.map((port: any) => ({
+              name: port.name,
+              protocol: port.protocol,
+              port: port.port,
+              targetPort: port.targetPort,
+              nodePort: port.nodePort,
+            })) || [],
+          selector: service.spec?.selector || {},
+          sessionAffinity: service.spec?.sessionAffinity,
+          loadBalancerIP: service.spec?.loadBalancerIP,
+          externalName: service.spec?.externalName,
+        },
+        status: {
+          loadBalancer: service.status?.loadBalancer,
+        },
+      }));
+
+      return {
+        total: services.length,
         namespace,
-        body: service,
-      });
-
-      this.logger?.info(`Updated status for service '${name}' in namespace '${namespace}'`);
-      return response;
+        services,
+      };
     } catch (error) {
-      this.handleApiError(error, 'UpdateStatus', name);
+      this.handleApiError(error, 'ListFormatted');
     }
   }
 
   /**
-   * Create a service from a pod template
+   * Get a service with MCP tool-friendly formatting
    */
-  async createFromPod(
-    pod: k8s.V1Pod,
-    port: number,
-    options?: ResourceOperationOptions & { serviceName?: string; serviceType?: string },
-  ): Promise<k8s.V1Service> {
-    const namespace = options?.namespace || pod.metadata?.namespace || 'default';
-    const podName = pod.metadata?.name || 'unknown';
-    const serviceName = options?.serviceName || `${podName}-service`;
+  async getFormatted(
+    name: string,
+    options?: ResourceOperationOptions,
+  ): Promise<{
+    resourceType: string;
+    metadata: any;
+    spec: any;
+    status: any;
+  }> {
+    try {
+      const service = await this.get(name, options);
 
-    const service: k8s.V1Service = {
-      apiVersion: 'v1',
-      kind: 'Service',
-      metadata: {
-        name: serviceName,
-        namespace,
-        labels: pod.metadata?.labels,
-      },
-      spec: {
-        selector: pod.metadata?.labels || {},
-        ports: [
-          {
-            protocol: 'TCP',
-            port: port,
-            targetPort: port,
-          },
-        ],
-        type: (options?.serviceType as any) || 'ClusterIP',
-      },
+      return {
+        resourceType: 'service',
+        metadata: this.formatResourceMetadata(service),
+        spec: {
+          type: service.spec?.type,
+          clusterIP: service.spec?.clusterIP,
+          externalIPs: service.spec?.externalIPs || [],
+          ports: service.spec?.ports || [],
+          selector: service.spec?.selector || {},
+          sessionAffinity: service.spec?.sessionAffinity,
+          loadBalancerIP: service.spec?.loadBalancerIP,
+          externalName: service.spec?.externalName,
+        },
+        status: service.status || {},
+      };
+    } catch (error) {
+      this.handleApiError(error, 'GetFormatted', name);
+    }
+  }
+
+  private formatResourceMetadata(resource: any): any {
+    return {
+      name: resource.metadata?.name,
+      namespace: resource.metadata?.namespace,
+      uid: resource.metadata?.uid,
+      resourceVersion: resource.metadata?.resourceVersion,
+      generation: resource.metadata?.generation,
+      creationTimestamp: resource.metadata?.creationTimestamp,
+      labels: resource.metadata?.labels || {},
+      annotations: resource.metadata?.annotations || {},
     };
-
-    return this.create(service, options);
   }
 }

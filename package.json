@@ -1,20 +1,36 @@
 {
-  "name": "kube-mcp",
-  "version": "0.1.0",
-  "description": "Kubernetes MCP server for Cursor IDE - provides intelligent debugging and analysis capabilities for Kubernetes clusters",
-  "main": "dist/index.js",
+  "name": "kubeview-mcp",
+  "version": "1.0.0",
+  "description": "Read-only MCP server for AI-powered Kubernetes introspection",
+  "main": "dist/src/index.js",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "bin": {
+    "kubeview-mcp": "./dist/src/cli/cli.js"
+  },
   "scripts": {
     "build": "tsc",
-    "dev": "tsx --watch src/index.ts",
-    "start": "node dist/index.js",
-    "setup:cursor": "node scripts/setup-cursor.js",
+    "dev": "tsx --watch src/cli/cli.ts",
+    "start": "node scripts/main.js",
+    "setup": "node scripts/setup.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "prepare": "husky"
+    "prepare": "husky",
+    "command": "node src/cli/run-command.js",
+    "release": "npm run release:check && npm run release:qa && npm run release:build && npm run release:tag",
+    "release:check": "git diff --exit-code && git diff --cached --exit-code || (echo 'Error: Working directory not clean. Please commit or stash changes.' && exit 1)",
+    "release:qa": "npm run lint && npm run typecheck && npm run test",
+    "release:build": "npm run build",
+    "release:tag": "git tag v$(node -p \"require('./package.json').version\") && echo 'Tagged version v'$(node -p \"require('./package.json').version\")"
   },
   "keywords": [
     "kubernetes",
@@ -24,19 +40,19 @@
     "k8s",
     "devtools"
   ],
-  "author": "kube-mcp team",
+  "author": "kubeview-mcp team",
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.27.0",
+    "@eslint/js": "^9.32.0",
     "@types/jest": "^29.5.14",
-    "@types/node": "^22.15.24",
+    "@types/node": "^24.1.0",
     "@types/winston": "^2.4.4",
-    "@typescript-eslint/eslint-plugin": "^8.33.0",
-    "@typescript-eslint/parser": "^8.33.0",
-    "eslint": "^9.27.0",
+    "@typescript-eslint/eslint-plugin": "^8.38.0",
+    "@typescript-eslint/parser": "^8.38.0",
+    "eslint": "^9.32.0",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-prettier": "^5.4.0",
     "husky": "^9.1.7",
@@ -49,7 +65,7 @@
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.3.0",
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.17.1",
     "winston": "^3.17.0",
     "zod": "^3.25.36"
   },

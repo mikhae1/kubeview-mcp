@@ -1,14 +1,12 @@
 /**
- * Error Handler Module
- *
- * Provides interfaces and implementations for custom error handling strategies
- * in Kubernetes operations.
+ * Enhanced error handling with circuit breaker and observability
  */
 
 import { Logger } from 'winston';
-import { KubernetesError, ErrorContext, createContextualError } from './ErrorHandling';
-import { RetryStrategy, RetryConfig, RETRY_PRESETS } from './RetryStrategy';
-import { CircuitBreaker, CircuitBreakerConfig, CircuitBreakerFactory } from './CircuitBreaker';
+
+import { KubernetesError, ErrorContext, createContextualError } from './ErrorHandling.js';
+import { RetryStrategy, RetryConfig, RETRY_PRESETS } from './RetryStrategy.js';
+import { CircuitBreaker, CircuitBreakerConfig, CircuitBreakerFactory } from './CircuitBreaker.js';
 
 /**
  * Error handler interface

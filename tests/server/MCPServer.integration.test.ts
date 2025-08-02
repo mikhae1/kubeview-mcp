@@ -1,6 +1,32 @@
+import { jest } from '@jest/globals';
 import { MCPServer } from '../../src/server/MCPServer';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { Readable, Writable } from 'stream';
+
+// Mock winston to suppress logging during tests
+jest.mock('winston', () => {
+  const mockLogger = {
+    info: jest.fn(),
+    error: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  };
+
+  return {
+    createLogger: jest.fn(() => mockLogger),
+    format: {
+      combine: jest.fn(),
+      timestamp: jest.fn(),
+      json: jest.fn(),
+      colorize: jest.fn(),
+      simple: jest.fn(),
+    },
+    transports: {
+      Console: jest.fn(),
+      File: jest.fn(),
+    },
+  };
+});
 
 describe('MCPServer Integration Tests', () => {
   let server: MCPServer;
@@ -12,10 +38,14 @@ describe('MCPServer Integration Tests', () => {
     // Reset stdout data
     stdoutData = [];
 
-    // Create mock streams
+    // Create mock streams with proper error handling
     mockStdin = new Readable({
       read() {},
     });
+
+    // Suppress error/close events on mock streams to prevent warnings
+    mockStdin.on('error', () => {});
+    mockStdin.on('close', () => {});
 
     mockStdout = new Writable({
       write(chunk: any, _encoding: any, callback: any) {
@@ -24,6 +54,9 @@ describe('MCPServer Integration Tests', () => {
         return true;
       },
     });
+
+    mockStdout.on('error', () => {});
+    mockStdout.on('close', () => {});
 
     // Mock process.stdin and process.stdout
     Object.defineProperty(process, 'stdin', {
@@ -40,9 +73,21 @@ describe('MCPServer Integration Tests', () => {
   });
 
   afterEach(async () => {
-    await server.stop();
-    mockStdin.destroy();
-    mockStdout.destroy();
+    // Cleanup server first to remove event listeners
+    if (server) {
+      server.cleanup();
+      await server.stop();
+    }
+
+    // Properly close streams without triggering warnings
+    if (mockStdin && !mockStdin.destroyed) {
+      mockStdin.removeAllListeners();
+      mockStdin.destroy();
+    }
+    if (mockStdout && !mockStdout.destroyed) {
+      mockStdout.removeAllListeners();
+      mockStdout.destroy();
+    }
   });
 
   describe('JSON-RPC 2.0 Communication', () => {
@@ -133,7 +178,7 @@ describe('MCPServer Integration Tests', () => {
         },
       };
 
-      const mockHandler = jest.fn().mockResolvedValue({
+      const mockHandler = jest.fn<(params: any) => Promise<any>>().mockResolvedValue({
         pods: [
           { name: 'pod-1', status: 'Running' },
           { name: 'pod-2', status: 'Pending' },

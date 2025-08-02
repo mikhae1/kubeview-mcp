@@ -1,25 +1,19 @@
-import {
-  KubernetesObject,
-  Watch,
-  CustomObjectsApi,
-  ApiextensionsV1Api,
-  KubernetesListObject,
-} from '@kubernetes/client-node';
+import * as k8s from '@kubernetes/client-node';
 import {
   BaseResourceOperations,
   ResourceOperationOptions,
   WatchCallback,
   WatchEventType,
-} from '../ResourceOperations';
-import { KubernetesClient } from '../KubernetesClient';
+} from '../BaseResourceOperations.js';
+import { KubernetesClient } from '../KubernetesClient.js';
 
 /**
  * Custom Resource operations implementation
  */
 export class CustomResourceOperations<
-  T extends KubernetesObject,
+  T extends k8s.KubernetesObject,
 > extends BaseResourceOperations<T> {
-  private customObjectsApi: CustomObjectsApi;
+  private customObjectsApi: k8s.CustomObjectsApi;
 
   constructor(
     client: KubernetesClient,
@@ -29,7 +23,7 @@ export class CustomResourceOperations<
     private namespaced: boolean = true,
   ) {
     super(client, plural);
-    this.customObjectsApi = client.kubeConfig.makeApiClient(CustomObjectsApi);
+    this.customObjectsApi = client.kubeConfig.makeApiClient(k8s.CustomObjectsApi);
   }
 
   /**
@@ -205,7 +199,7 @@ export class CustomResourceOperations<
   /**
    * List custom resources
    */
-  async list(options?: ResourceOperationOptions): Promise<KubernetesListObject<T>> {
+  async list(options?: ResourceOperationOptions): Promise<k8s.KubernetesListObject<T>> {
     try {
       const namespace = options?.namespace;
       const listOptions = this.buildListOptions(options);
@@ -246,7 +240,7 @@ export class CustomResourceOperations<
         });
       }
 
-      return response as KubernetesListObject<T>;
+      return response as k8s.KubernetesListObject<T>;
     } catch (error) {
       this.handleApiError(error, 'List');
     }
@@ -257,7 +251,7 @@ export class CustomResourceOperations<
    */
   watch(callback: WatchCallback<T>, options?: ResourceOperationOptions): () => void {
     const namespace = options?.namespace;
-    const watch = new Watch(this.client.kubeConfig);
+    const watch = new k8s.Watch(this.client.kubeConfig);
     let aborted = false;
 
     const startWatch = async () => {
@@ -381,7 +375,7 @@ export class CustomResourceOperations<
    */
   async crdExists(): Promise<boolean> {
     try {
-      const apiExtensions = this.client.kubeConfig.makeApiClient(ApiextensionsV1Api);
+      const apiExtensions = this.client.kubeConfig.makeApiClient(k8s.ApiextensionsV1Api);
       const crdName = `${this.plural}.${this.group}`;
 
       await apiExtensions.readCustomResourceDefinition({

@@ -1,4 +1,4 @@
-export { KubernetesClient, KubernetesClientConfig, AuthMethod } from './KubernetesClient';
+export { KubernetesClient, KubernetesClientConfig, AuthMethod } from './KubernetesClient.js';
 
 // Export connection pooling
 export {
@@ -6,19 +6,15 @@ export {
   ConnectionPoolConfig,
   ConnectionEntry,
   ConnectionState,
-} from './ConnectionPool';
+} from './ConnectionPool.js';
 
-export {
-  ConnectionManager,
-  ConnectionManagerConfig,
-  ClusterConfig,
-  ClusterStats,
-  LoadBalancingStrategy,
-} from './ConnectionManager';
+export { ConnectionManager, ConnectionManagerConfig, ClusterStats } from './ConnectionManager.js';
 
 // Export resource operations
+export { ResourceOperations } from './ResourceOperations.js';
+
+// Export base resource operations classes and interfaces
 export {
-  ResourceOperations,
   ResourceOperationOptions,
   IResourceOperations,
   BaseResourceOperations,
@@ -26,7 +22,7 @@ export {
   WatchEventType,
   WatchCallback,
   KubernetesOperationError,
-} from './ResourceOperations';
+} from './BaseResourceOperations.js';
 
 // Export error handling
 export {
@@ -45,7 +41,7 @@ export {
   ErrorContext,
   convertApiError,
   createContextualError,
-} from './ErrorHandling';
+} from './ErrorHandling.js';
 
 // Export retry strategy
 export {
@@ -58,7 +54,7 @@ export {
   DEFAULT_RETRY_CONFIG,
   createRetryStrategy,
   Retryable,
-} from './RetryStrategy';
+} from './RetryStrategy.js';
 
 // Export circuit breaker
 export {
@@ -69,7 +65,7 @@ export {
   CircuitStats,
   DEFAULT_CIRCUIT_CONFIG,
   WithCircuitBreaker,
-} from './CircuitBreaker';
+} from './CircuitBreaker.js';
 
 // Export error handler
 export {
@@ -85,7 +81,7 @@ export {
   IErrorRecovery,
   FallbackRecovery,
   CacheRecovery,
-} from './ErrorHandler';
+} from './ErrorHandler.js';
 
 // Export retryable operation
 export {
@@ -94,15 +90,18 @@ export {
   RetryableOperationFactory,
   OperationResult,
   RetryableMethod,
-} from './RetryableOperation';
+} from './RetryableOperation.js';
 
 // Export specific resource operations
-export { PodOperations, PodOperationOptions } from './resources/PodOperations';
-export { ServiceOperations } from './resources/ServiceOperations';
-export { DeploymentOperations, DeploymentOperationOptions } from './resources/DeploymentOperations';
-export { ConfigMapOperations } from './resources/ConfigMapOperations';
-export { SecretOperations, SecretType } from './resources/SecretOperations';
-export { CustomResourceOperations } from './resources/CustomResourceOperations';
+export { PodOperations, PodOperationOptions } from './resources/PodOperations.js';
+export { ServiceOperations } from './resources/ServiceOperations.js';
+export {
+  DeploymentOperations,
+  DeploymentOperationOptions,
+} from './resources/DeploymentOperations.js';
+export { ConfigMapOperations } from './resources/ConfigMapOperations.js';
+export { SecretOperations, SecretType } from './resources/SecretOperations.js';
+export { CustomResourceOperations } from './resources/CustomResourceOperations.js';
 
 // Export utilities
 export {
@@ -114,4 +113,4 @@ export {
   PodTemplateUtils,
   ServiceUtils,
   DeploymentUtils,
-} from './utils/ResourceUtils';
+} from './utils/ResourceUtils.js';

@@ -6,6 +6,8 @@ import {
   ListResourceTemplatesRequestSchema,
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
   Tool,
   Resource,
   ResourceTemplate,
@@ -33,6 +35,11 @@ interface ToolEntry {
 /**
  * Core MCP Server implementation for Kubernetes operations
  */
+export interface MCPServerOptions {
+  skipTransportErrorHandling?: boolean;
+  skipGracefulShutdown?: boolean;
+}
+
 export class MCPServer {
   private server: Server;
   private transport: StdioServerTransport;
@@ -42,18 +49,26 @@ export class MCPServer {
   private resourceTemplates: Map<string, ResourceTemplate> = new Map();
   private plugins: Map<string, MCPPlugin> = new Map();
   private isShuttingDown = false;
+  private options: MCPServerOptions;
+  private eventListeners: Array<{
+    target: any;
+    event: string;
+    handler: (...args: any[]) => void;
+  }> = [];
 
-  constructor() {
+  constructor(options: MCPServerOptions = {}) {
+    this.options = options;
     // Initialize Winston logger
     this.logger = winston.createLogger({
       level: process.env.LOG_LEVEL || 'info',
       format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
       transports: [
         new winston.transports.Console({
+          stderrLevels: ['error', 'warn', 'info', 'verbose', 'debug', 'silly'],
           format: winston.format.combine(winston.format.colorize(), winston.format.simple()),
         }),
         new winston.transports.File({
-          filename: 'kube-mcp.log',
+          filename: 'kubeview-mcp.log',
           format: winston.format.json(),
         }),
       ],
@@ -62,7 +77,7 @@ export class MCPServer {
     // Initialize MCP server
     this.server = new Server(
       {
-        name: 'kube-mcp',
+        name: 'kubeview-mcp',
         version: '0.1.0',
       },
       {
@@ -77,13 +92,137 @@ export class MCPServer {
     // Initialize stdio transport
     this.transport = new StdioServerTransport();
 
+    // Add custom error handler to the transport (skip in tests)
+    if (!options.skipTransportErrorHandling) {
+      this.setupTransportErrorHandling();
+    }
+
     // Set up handlers
     this.setupHandlers();
 
-    // Set up graceful shutdown
-    this.setupGracefulShutdown();
+    // Set up graceful shutdown (skip in tests to avoid process listeners)
+    if (!this.options.skipGracefulShutdown) {
+      this.setupGracefulShutdown();
+    }
 
     this.logger.info('MCPServer initialized');
+  }
+
+  /**
+   * Add an event listener and track it for cleanup
+   */
+  private addTrackedListener(target: any, event: string, handler: (...args: any[]) => void): void {
+    target.on(event, handler);
+    this.eventListeners.push({ target, event, handler });
+  }
+
+  /**
+   * Remove all tracked event listeners
+   */
+  private removeAllListeners(): void {
+    for (const { target, event, handler } of this.eventListeners) {
+      try {
+        target.removeListener(event, handler);
+      } catch {
+        // Ignore errors during cleanup
+      }
+    }
+    this.eventListeners = [];
+  }
+
+  /**
+   * Set up custom error handling for the transport
+   */
+  private setupTransportErrorHandling(): void {
+    // Handle connection errors in the transport
+    // StdioServerTransport uses the process stdin/stdout directly
+    this.addTrackedListener(process.stdin, 'error', (error) => {
+      this.logger.error('Transport stdin error:', error);
+      // Don't throw - log and continue
+    });
+
+    this.addTrackedListener(process.stdout, 'error', (error) => {
+      this.logger.error('Transport stdout error:', error);
+      // Don't throw - log and continue
+    });
+
+    // Add additional error event listeners to catch more issues
+    if (process.stdin.on && typeof process.stdin.on === 'function') {
+      this.addTrackedListener(process.stdin, 'close', () => {
+        this.logger.warn('Transport stdin closed unexpectedly');
+        this.gracefulRestart();
+      });
+    }
+
+    if (process.stdout.on && typeof process.stdout.on === 'function') {
+      this.addTrackedListener(process.stdout, 'close', () => {
+        this.logger.warn('Transport stdout closed unexpectedly');
+        this.gracefulRestart();
+      });
+    }
+  }
+
+  /**
+   * Attempt to gracefully restart the server connection
+   */
+  private async gracefulRestart(): Promise<void> {
+    if (this.isShuttingDown) return;
+
+    this.logger.info('Attempting to gracefully restart server connection...');
+
+    try {
+      // Close existing connection
+      await this.server.close();
+
+      // Small delay to allow resources to be released
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Create a new transport instance since the old one might be in an invalid state
+      this.transport = new StdioServerTransport();
+
+      // Reconnect
+      await this.server.connect(this.transport);
+      this.logger.info('Server connection restarted successfully');
+    } catch (error) {
+      this.logger.error('Failed to restart server connection', error);
+
+      // If we get an error about the transport already being started,
+      // try to create a completely new server instance
+      if (
+        error instanceof Error &&
+        error.message.includes('StdioServerTransport already started')
+      ) {
+        this.logger.info('Attempting to create new server instance...');
+        try {
+          // Re-initialize the server
+          this.server = new Server(
+            {
+              name: 'kubeview-mcp',
+              version: '0.1.0',
+            },
+            {
+              capabilities: {
+                tools: {},
+                resources: {},
+                prompts: {},
+              },
+            },
+          );
+
+          // Recreate the transport
+          this.transport = new StdioServerTransport();
+
+          // Re-register all handlers
+          this.setupHandlers();
+
+          // Reconnect
+          await this.server.connect(this.transport);
+          this.logger.info('Server reconnected with new instance successfully');
+        } catch (nestedError) {
+          this.logger.error('Failed to create new server instance', nestedError);
+        }
+      }
+    }
   }
 
   /**
@@ -164,6 +303,19 @@ export class MCPServer {
       this.logger.debug(`Listing ${templates.length} resource templates`);
       return { resourceTemplates: templates };
     });
+
+    // Handle prompt listing
+    this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
+      this.logger.debug('Listing prompts (none available)');
+      return { prompts: [] };
+    });
+
+    // Handle prompt getting
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+      const error = `Prompt not found: ${request.params.name}`;
+      this.logger.error(error);
+      throw new Error(error);
+    });
   }
 
   /**
@@ -217,12 +369,57 @@ export class MCPServer {
     this.logger.info('Starting MCP server...');
 
     try {
-      await this.server.connect(this.transport);
+      if (this.options.skipTransportErrorHandling) {
+        // Simple connection for tests
+        await this.server.connect(this.transport);
+      } else {
+        // Wrap the connection with our custom error handling for production
+        await this.connectWithErrorHandling();
+      }
       this.logger.info('MCP server started successfully');
     } catch (error) {
       this.logger.error('Failed to start MCP server', error);
       throw error;
     }
+  }
+
+  /**
+   * Connect to the transport with improved error handling
+   */
+  private async connectWithErrorHandling(): Promise<void> {
+    // Add global handler for parse errors that might not be caught by the SDK
+    const originalStdinData = process.stdin.listeners('data') as Array<(chunk: Buffer) => void>;
+
+    // Add our handler before the SDK's handlers
+    process.stdin.removeAllListeners('data');
+
+    process.stdin.on('data', (chunk: Buffer) => {
+      try {
+        // Try to parse as JSON to catch syntax errors early
+        const str = chunk.toString().trim();
+        if (str.length > 0) {
+          try {
+            JSON.parse(str);
+          } catch (err) {
+            this.logger.warn(
+              `Received invalid JSON: ${str.substring(0, 100)}${str.length > 100 ? '...' : ''}`,
+            );
+            this.logger.error('JSON parse error:', err);
+            // Continue processing - the SDK will handle the error
+          }
+        }
+      } catch (err) {
+        this.logger.error('Error in pre-processing stdin data:', err);
+      }
+    });
+
+    // Re-add original listeners
+    for (const listener of originalStdinData) {
+      process.stdin.on('data', listener);
+    }
+
+    // Connect to the transport
+    await this.server.connect(this.transport);
   }
 
   /**
@@ -235,6 +432,9 @@ export class MCPServer {
 
     this.isShuttingDown = true;
     this.logger.info('Stopping MCP server...');
+
+    // Remove all tracked event listeners
+    this.removeAllListeners();
 
     // Shutdown plugins
     for (const [name, plugin] of this.plugins) {
@@ -263,15 +463,15 @@ export class MCPServer {
       process.exit(0);
     };
 
-    process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    this.addTrackedListener(process, 'SIGINT', () => shutdown('SIGINT'));
+    this.addTrackedListener(process, 'SIGTERM', () => shutdown('SIGTERM'));
 
-    process.on('uncaughtException', (error) => {
+    this.addTrackedListener(process, 'uncaughtException', (error) => {
       this.logger.error('Uncaught exception:', error);
       shutdown('uncaughtException');
     });
 
-    process.on('unhandledRejection', (reason) => {
+    this.addTrackedListener(process, 'unhandledRejection', (reason) => {
       this.logger.error('Unhandled rejection:', reason);
       shutdown('unhandledRejection');
     });
@@ -289,5 +489,12 @@ export class MCPServer {
    */
   public getServer(): Server {
     return this.server;
+  }
+
+  /**
+   * Clean up resources and event listeners (useful for tests)
+   */
+  public cleanup(): void {
+    this.removeAllListeners();
   }
 }

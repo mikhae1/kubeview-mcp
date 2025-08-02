@@ -1,12 +1,10 @@
 /**
- * Retry Strategy Module
- *
- * Implements various retry strategies including exponential backoff with jitter
- * for resilient Kubernetes API operations.
+ * Retry strategy for Kubernetes operations
  */
 
 import { Logger } from 'winston';
-import { KubernetesError } from './ErrorHandling';
+
+import { KubernetesError } from './ErrorHandling.js';
 
 /**
  * Retry configuration options
@@ -106,7 +104,17 @@ export class RetryStrategy {
   private readonly logger?: Logger;
 
   constructor(config: Partial<RetryConfig> = {}, logger?: Logger) {
-    this.config = { ...DEFAULT_RETRY_CONFIG, ...config };
+    // If config is a preset, merge with DEFAULT_RETRY_CONFIG, then user config
+    let baseConfig: Partial<RetryConfig> = {};
+    if (
+      config &&
+      (config as any).maxAttempts !== undefined &&
+      (config as any).initialDelayMs !== undefined
+    ) {
+      baseConfig = config;
+    }
+    // If config is a preset object (from RETRY_PRESETS), merge with default
+    this.config = { ...DEFAULT_RETRY_CONFIG, ...baseConfig, ...config };
     this.logger = logger;
   }
 
@@ -114,77 +122,68 @@ export class RetryStrategy {
    * Execute an operation with retry logic
    */
   async execute<T>(operation: () => Promise<T>, operationName?: string): Promise<RetryResult<T>> {
-    const context: RetryContext = {
-      attempt: 0,
-      totalDelay: 0,
-      startTime: Date.now(),
-      errors: [],
-    };
+    let timeoutId: NodeJS.Timeout | null = null;
+    let timeoutPromise: Promise<never> | null = null;
+    if (this.config.timeoutMs) {
+      timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`Operation timed out after ${this.config.timeoutMs}ms`));
+        }, this.config.timeoutMs);
+      });
+    }
 
-    const timeoutPromise = this.config.timeoutMs
-      ? this.createTimeoutPromise(this.config.timeoutMs)
-      : null;
-
-    while (context.attempt < this.config.maxAttempts) {
-      context.attempt++;
-
+    let lastError: any = undefined;
+    let totalDelay = 0;
+    const startTime = Date.now();
+    for (let i = 0; i < this.config.maxAttempts; i++) {
       try {
-        // Execute with timeout if configured
-        const result = timeoutPromise
-          ? await Promise.race([operation(), timeoutPromise])
-          : await operation();
-
+        const race = timeoutPromise ? Promise.race([operation(), timeoutPromise]) : operation();
+        const opResult = await race;
+        if (timeoutId) clearTimeout(timeoutId);
         return {
           success: true,
-          value: result as T,
-          attempts: context.attempt,
-          totalDelayMs: context.totalDelay,
-          totalTimeMs: Date.now() - context.startTime,
+          value: opResult as T,
+          attempts: i + 1,
+          totalDelayMs: totalDelay,
+          totalTimeMs: Date.now() - startTime,
         };
       } catch (error) {
-        context.errors.push(error);
-
-        // Check if we should retry
-        if (!this.shouldRetry(error, context)) {
+        lastError = error;
+        if (
+          i < this.config.maxAttempts - 1 &&
+          this.shouldRetry(error, { attempt: i, totalDelay, startTime, errors: [] })
+        ) {
+          const delayMs = this.calculateDelay(i + 1);
+          totalDelay += delayMs;
+          this.logger?.warn(
+            `Retry attempt ${i + 2}/${this.config.maxAttempts} for ${operationName || 'operation'}`,
+            {
+              error: error instanceof Error ? error.message : String(error),
+              nextDelayMs: delayMs,
+              totalDelayMs: totalDelay,
+            },
+          );
+          this.config.onRetry?.(i + 1, error, delayMs);
+          await this.delay(delayMs);
+        } else {
+          if (timeoutId) clearTimeout(timeoutId);
           return {
             success: false,
             error,
-            attempts: context.attempt,
-            totalDelayMs: context.totalDelay,
-            totalTimeMs: Date.now() - context.startTime,
+            attempts: i + 1,
+            totalDelayMs: totalDelay,
+            totalTimeMs: Date.now() - startTime,
           };
         }
-
-        // Calculate delay for next attempt
-        const delayMs = this.calculateDelay(context.attempt);
-        context.totalDelay += delayMs;
-
-        // Log retry attempt
-        this.logger?.warn(
-          `Retry attempt ${context.attempt}/${this.config.maxAttempts} for ${operationName || 'operation'}`,
-          {
-            error: error instanceof Error ? error.message : String(error),
-            nextDelayMs: delayMs,
-            totalDelayMs: context.totalDelay,
-          },
-        );
-
-        // Call retry callback if provided
-        this.config.onRetry?.(context.attempt, error, delayMs);
-
-        // Wait before next attempt
-        await this.delay(delayMs);
       }
     }
-
-    // All attempts exhausted
-    const lastError = context.errors[context.errors.length - 1];
+    if (timeoutId) clearTimeout(timeoutId);
     return {
       success: false,
       error: lastError,
-      attempts: context.attempt,
-      totalDelayMs: context.totalDelay,
-      totalTimeMs: Date.now() - context.startTime,
+      attempts: this.config.maxAttempts,
+      totalDelayMs: totalDelay,
+      totalTimeMs: Date.now() - startTime,
     };
   }
 
@@ -268,17 +267,6 @@ export class RetryStrategy {
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
-
-  /**
-   * Create a promise that rejects after timeout
-   */
-  private createTimeoutPromise(timeoutMs: number): Promise<never> {
-    return new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(`Operation timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-    });
-  }
 }
 
 /**
@@ -334,6 +322,7 @@ export class RetryBuilder {
   }
 
   withPreset(preset: keyof typeof RETRY_PRESETS): this {
+    // User overrides should take precedence
     this.config = { ...RETRY_PRESETS[preset], ...this.config };
     return this;
   }

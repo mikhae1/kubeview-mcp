@@ -5,8 +5,8 @@ import {
   ResourceOperationOptions,
   WatchCallback,
   WatchEventType,
-} from '../ResourceOperations';
-import { KubernetesClient } from '../KubernetesClient';
+} from '../BaseResourceOperations.js';
+import { KubernetesClient } from '../KubernetesClient.js';
 
 /**
  * Pod-specific operation options
@@ -39,7 +39,7 @@ export interface PodOperationOptions extends ResourceOperationOptions {
 }
 
 /**
- * Pod operations implementation
+ * Pod operations implementation - Read-only operations
  */
 export class PodOperations extends BaseResourceOperations<V1Pod> {
   constructor(client: KubernetesClient) {
@@ -47,20 +47,31 @@ export class PodOperations extends BaseResourceOperations<V1Pod> {
   }
 
   /**
-   * Create a new pod
+   * @throws {Error} This operation is not supported in read-only mode
    */
-  async create(pod: V1Pod, options?: ResourceOperationOptions): Promise<V1Pod> {
-    try {
-      const namespace = options?.namespace || pod.metadata?.namespace || 'default';
-      const response = await this.client.core.createNamespacedPod({
-        namespace,
-        body: pod,
-      });
-      this.logger?.info(`Created pod '${pod.metadata?.name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Create', pod.metadata?.name);
-    }
+  async create(_pod: V1Pod, _options?: ResourceOperationOptions): Promise<V1Pod> {
+    throw new Error('Create operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async update(_pod: V1Pod, _options?: ResourceOperationOptions): Promise<V1Pod> {
+    throw new Error('Update operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async patch(_name: string, _patch: any, _options?: ResourceOperationOptions): Promise<V1Pod> {
+    throw new Error('Patch operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async delete(_name: string, _options?: ResourceOperationOptions): Promise<void> {
+    throw new Error('Delete operation is not supported in read-only mode');
   }
 
   /**
@@ -76,64 +87,6 @@ export class PodOperations extends BaseResourceOperations<V1Pod> {
       return response;
     } catch (error) {
       this.handleApiError(error, 'Get', name);
-    }
-  }
-
-  /**
-   * Update a pod
-   */
-  async update(pod: k8s.V1Pod, options?: ResourceOperationOptions): Promise<k8s.V1Pod> {
-    try {
-      const namespace = options?.namespace || pod.metadata?.namespace || 'default';
-      const name = pod.metadata?.name;
-      if (!name) {
-        throw new Error('Pod name is required for update');
-      }
-      const response = await this.client.core.replaceNamespacedPod({
-        name,
-        namespace,
-        body: pod,
-      });
-      this.logger?.info(`Updated pod '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Update', pod.metadata?.name);
-    }
-  }
-
-  /**
-   * Patch a pod
-   */
-  async patch(name: string, patch: any, options?: ResourceOperationOptions): Promise<k8s.V1Pod> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const response = await this.client.core.patchNamespacedPod({
-        name,
-        namespace,
-        body: patch,
-      });
-      this.logger?.info(`Patched pod '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Patch', name);
-    }
-  }
-
-  /**
-   * Delete a pod
-   */
-  async delete(name: string, options?: ResourceOperationOptions): Promise<void> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const deleteOptions = this.buildDeleteOptions(options);
-      await this.client.core.deleteNamespacedPod({
-        name,
-        namespace,
-        body: deleteOptions,
-      });
-      this.logger?.info(`Deleted pod '${name}' from namespace '${namespace}'`);
-    } catch (error) {
-      this.handleApiError(error, 'Delete', name);
     }
   }
 
@@ -250,12 +203,8 @@ export class PodOperations extends BaseResourceOperations<V1Pod> {
         namespace,
         container: options?.container,
         follow: options?.follow,
-        insecureSkipTLSVerifyBackend: false,
-        limitBytes: undefined,
-        previous: options?.previous,
-        pretty: undefined,
-        sinceSeconds: undefined,
         tailLines: options?.tailLines,
+        previous: options?.previous,
         timestamps: options?.timestamps,
       });
       return response as unknown as string;
@@ -274,12 +223,18 @@ export class PodOperations extends BaseResourceOperations<V1Pod> {
   ): () => void {
     const namespace = options?.namespace || 'default';
     let aborted = false;
-    let intervalId: NodeJS.Timeout | null = null;
 
     const startStream = async () => {
       try {
-        // Use periodic polling instead of streaming for simplicity
-        let lastResourceVersion: string | undefined;
+        const stream = await this.client.core.readNamespacedPodLog({
+          name,
+          namespace,
+          container: options?.container,
+          follow: options?.follow,
+          tailLines: options?.tailLines,
+          previous: options?.previous,
+          timestamps: options?.timestamps,
+        });
 
         const pollLogs = async () => {
           if (aborted) return;
@@ -287,28 +242,22 @@ export class PodOperations extends BaseResourceOperations<V1Pod> {
           try {
             const logs = await this.getLogs(name, {
               ...options,
-              namespace,
               follow: false,
-              tailLines: options?.tailLines || 100,
             });
-
-            if (logs && logs !== lastResourceVersion) {
-              onData(logs);
-              lastResourceVersion = logs;
-            }
+            onData(logs);
           } catch (error) {
-            if (!aborted) {
-              this.logger?.error(`Failed to poll logs for pod '${name}': ${error}`);
-            }
+            this.logger?.error(`Error polling logs for pod '${name}': ${error}`);
+          }
+
+          if (!aborted) {
+            setTimeout(pollLogs, 5000); // Poll every 5 seconds
           }
         };
 
-        // Initial poll
-        await pollLogs();
-
-        // Set up periodic polling
         if (options?.follow) {
-          intervalId = setInterval(pollLogs, 2000); // Poll every 2 seconds
+          pollLogs();
+        } else {
+          onData(stream as unknown as string);
         }
       } catch (error) {
         this.logger?.error(`Failed to start log stream for pod '${name}': ${error}`);
@@ -316,76 +265,11 @@ export class PodOperations extends BaseResourceOperations<V1Pod> {
       }
     };
 
-    // Start the stream
     startStream();
 
-    // Return cleanup function
     return () => {
       aborted = true;
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
     };
-  }
-
-  /**
-   * Execute command in a pod
-   */
-  async exec(
-    name: string,
-    command: string[],
-    options?: PodOperationOptions & { stdin?: string },
-  ): Promise<{ stdout: string; stderr: string }> {
-    const namespace = options?.namespace || 'default';
-    const exec = new k8s.Exec(this.client.kubeConfig);
-
-    return new Promise((resolve, reject) => {
-      let stdout = '';
-      let stderr = '';
-
-      const stdoutStream = new (require('stream').Writable)({
-        write(chunk: any, _encoding: any, callback: any) {
-          stdout += chunk.toString();
-          callback();
-        },
-      });
-
-      const stderrStream = new (require('stream').Writable)({
-        write(chunk: any, _encoding: any, callback: any) {
-          stderr += chunk.toString();
-          callback();
-        },
-      });
-
-      const stdinStream = options?.stdin
-        ? new (require('stream').Readable)({
-            read() {
-              this.push(options.stdin);
-              this.push(null);
-            },
-          })
-        : null;
-
-      exec
-        .exec(
-          namespace,
-          name,
-          options?.container || '',
-          command,
-          stdoutStream,
-          stderrStream,
-          stdinStream,
-          false,
-          (status: k8s.V1Status) => {
-            if (status.status === 'Success') {
-              resolve({ stdout, stderr });
-            } else {
-              reject(new Error(`Exec failed: ${status.message}`));
-            }
-          },
-        )
-        .catch(reject);
-    });
   }
 
   /**
@@ -406,5 +290,128 @@ export class PodOperations extends BaseResourceOperations<V1Pod> {
     } catch (error) {
       this.handleApiError(error, 'GetMetrics', name);
     }
+  }
+
+  /**
+   * List pods with MCP tool-friendly formatting
+   */
+  async listFormatted(options?: ResourceOperationOptions): Promise<{
+    total: number;
+    namespace: string;
+    pods: Array<{
+      metadata: any;
+      status: any;
+      spec: any;
+    }>;
+  }> {
+    try {
+      const result = await this.list(options);
+      const namespace = options?.namespace || 'all';
+
+      const pods = result.items.map((pod: any) => ({
+        metadata: this.formatResourceMetadata(pod),
+        status: {
+          ...this.formatResourceStatus(pod),
+          phase: pod.status?.phase,
+          podIP: pod.status?.podIP,
+          hostIP: pod.status?.hostIP,
+          startTime: pod.status?.startTime,
+          containerStatuses:
+            pod.status?.containerStatuses?.map((cs: any) => ({
+              name: cs.name,
+              image: cs.image,
+              ready: cs.ready,
+              restartCount: cs.restartCount,
+              state: cs.state,
+            })) || [],
+        },
+        spec: {
+          nodeName: pod.spec?.nodeName,
+          containers:
+            pod.spec?.containers?.map((c: any) => ({
+              name: c.name,
+              image: c.image,
+              ports: c.ports || [],
+              resources: c.resources || {},
+            })) || [],
+        },
+      }));
+
+      return {
+        total: pods.length,
+        namespace,
+        pods,
+      };
+    } catch (error) {
+      this.handleApiError(error, 'ListFormatted');
+    }
+  }
+
+  /**
+   * Get a pod with MCP tool-friendly formatting
+   */
+  async getFormatted(
+    name: string,
+    options?: ResourceOperationOptions,
+  ): Promise<{
+    resourceType: string;
+    metadata: any;
+    spec: any;
+    status: any;
+  }> {
+    try {
+      const pod = await this.get(name, options);
+
+      return {
+        resourceType: 'pod',
+        metadata: this.formatResourceMetadata(pod),
+        spec: {
+          nodeName: pod.spec?.nodeName,
+          serviceAccountName: pod.spec?.serviceAccountName,
+          restartPolicy: pod.spec?.restartPolicy,
+          containers:
+            pod.spec?.containers?.map((c: any) => ({
+              name: c.name,
+              image: c.image,
+              command: c.command,
+              args: c.args,
+              ports: c.ports || [],
+              env: c.env || [],
+              resources: c.resources || {},
+              volumeMounts: c.volumeMounts || [],
+            })) || [],
+          volumes: pod.spec?.volumes || [],
+        },
+        status: {
+          ...this.formatResourceStatus(pod),
+          phase: pod.status?.phase,
+          podIP: pod.status?.podIP,
+          hostIP: pod.status?.hostIP,
+          startTime: pod.status?.startTime,
+          containerStatuses: pod.status?.containerStatuses || [],
+        },
+      };
+    } catch (error) {
+      this.handleApiError(error, 'GetFormatted', name);
+    }
+  }
+
+  private formatResourceMetadata(resource: any): any {
+    return {
+      name: resource.metadata?.name,
+      namespace: resource.metadata?.namespace,
+      uid: resource.metadata?.uid,
+      resourceVersion: resource.metadata?.resourceVersion,
+      generation: resource.metadata?.generation,
+      creationTimestamp: resource.metadata?.creationTimestamp,
+      labels: resource.metadata?.labels || {},
+      annotations: resource.metadata?.annotations || {},
+    };
+  }
+
+  private formatResourceStatus(resource: any): any {
+    return {
+      conditions: resource.status?.conditions || [],
+    };
   }
 }

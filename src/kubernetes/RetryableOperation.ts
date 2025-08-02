@@ -6,9 +6,10 @@
  */
 
 import { Logger } from 'winston';
-import { RetryStrategy, RetryConfig, RETRY_PRESETS } from './RetryStrategy';
-import { CircuitBreaker, CircuitBreakerConfig } from './CircuitBreaker';
-import { ErrorMonitor, KubernetesError, ErrorContext } from './ErrorHandling';
+
+import { RetryStrategy, RetryConfig, RETRY_PRESETS } from './RetryStrategy.js';
+import { CircuitBreaker, CircuitBreakerConfig } from './CircuitBreaker.js';
+import { ErrorMonitor, KubernetesError, ErrorContext } from './ErrorHandling.js';
 
 /**
  * Configuration for retryable operations

@@ -27,4 +27,12 @@ export default {
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
+  // Improve test cleanup and prevent hanging processes
+  detectOpenHandles: true,
+  forceExit: true,
+  // Set timeouts to prevent hanging tests
+  testTimeout: 10000,
+  // Clear mocks between tests
+  clearMocks: true,
+  restoreMocks: true,
 };

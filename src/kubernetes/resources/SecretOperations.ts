@@ -4,8 +4,8 @@ import {
   ResourceOperationOptions,
   WatchCallback,
   WatchEventType,
-} from '../ResourceOperations';
-import { KubernetesClient } from '../KubernetesClient';
+} from '../BaseResourceOperations.js';
+import { KubernetesClient } from '../KubernetesClient.js';
 
 /**
  * Secret types
@@ -31,18 +31,8 @@ export class SecretOperations extends BaseResourceOperations<k8s.V1Secret> {
   /**
    * Create a new Secret
    */
-  async create(secret: k8s.V1Secret, options?: ResourceOperationOptions): Promise<k8s.V1Secret> {
-    try {
-      const namespace = options?.namespace || secret.metadata?.namespace || 'default';
-      const response = await this.client.core.createNamespacedSecret({
-        namespace,
-        body: secret,
-      });
-      this.logger?.info(`Created Secret '${secret.metadata?.name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Create', secret.metadata?.name);
-    }
+  async create(_secret: k8s.V1Secret, _options?: ResourceOperationOptions): Promise<k8s.V1Secret> {
+    throw new Error('Create operation is not supported in read-only mode');
   }
 
   /**
@@ -64,59 +54,26 @@ export class SecretOperations extends BaseResourceOperations<k8s.V1Secret> {
   /**
    * Update a Secret
    */
-  async update(secret: k8s.V1Secret, options?: ResourceOperationOptions): Promise<k8s.V1Secret> {
-    try {
-      const namespace = options?.namespace || secret.metadata?.namespace || 'default';
-      const name = secret.metadata?.name;
-      if (!name) {
-        throw new Error('Secret name is required for update');
-      }
-      const response = await this.client.core.replaceNamespacedSecret({
-        name,
-        namespace,
-        body: secret,
-      });
-      this.logger?.info(`Updated Secret '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Update', secret.metadata?.name);
-    }
+  async update(_secret: k8s.V1Secret, _options?: ResourceOperationOptions): Promise<k8s.V1Secret> {
+    throw new Error('Update operation is not supported in read-only mode');
   }
 
   /**
    * Patch a Secret
    */
-  async patch(name: string, patch: any, options?: ResourceOperationOptions): Promise<k8s.V1Secret> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const response = await this.client.core.patchNamespacedSecret({
-        name,
-        namespace,
-        body: patch,
-      });
-      this.logger?.info(`Patched Secret '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Patch', name);
-    }
+  async patch(
+    _name: string,
+    _patch: unknown,
+    _options?: ResourceOperationOptions,
+  ): Promise<k8s.V1Secret> {
+    throw new Error('Patch operation is not supported in read-only mode');
   }
 
   /**
    * Delete a Secret
    */
-  async delete(name: string, options?: ResourceOperationOptions): Promise<void> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const deleteOptions = this.buildDeleteOptions(options);
-      await this.client.core.deleteNamespacedSecret({
-        name,
-        namespace,
-        body: deleteOptions,
-      });
-      this.logger?.info(`Deleted Secret '${name}' from namespace '${namespace}'`);
-    } catch (error) {
-      this.handleApiError(error, 'Delete', name);
-    }
+  async delete(_name: string, _options?: ResourceOperationOptions): Promise<void> {
+    throw new Error('Delete operation is not supported in read-only mode');
   }
 
   /**
@@ -159,6 +116,42 @@ export class SecretOperations extends BaseResourceOperations<k8s.V1Secret> {
         });
       }
 
+      // The skipSanitize parameter is accepted for API compatibility but doesn't affect output yet
+      if (!options?.skipSanitize) {
+        // For now, just sanitize the data field by removing the actual secret values
+        // to prevent accidental exposure of sensitive data
+        response.items = response.items.map((secret: k8s.V1Secret) => ({
+          ...secret,
+          data: secret.data
+            ? Object.keys(secret.data).reduce((acc: { [key: string]: string }, key: string) => {
+                acc[key] = '*** FILTERED ***';
+                return acc;
+              }, {})
+            : undefined,
+        }));
+      }
+
+      response.items = response.items.map((item) => ({
+        ...item,
+        name: item.metadata?.name,
+        namespace: item.metadata?.namespace,
+        metadata: {
+          labels: item.metadata?.labels,
+          annotations: item.metadata?.annotations,
+          creationTimestamp: item.metadata?.creationTimestamp,
+        },
+      }));
+
+      // Remove data from response if namespace is not provided
+      if (!namespace) {
+        response.items = response.items.map((item) => ({
+          ...item,
+          data: undefined,
+          binaryData: undefined,
+          metadata: undefined,
+        }));
+      }
+
       return response;
     } catch (error) {
       this.handleApiError(error, 'List');
@@ -169,203 +162,60 @@ export class SecretOperations extends BaseResourceOperations<k8s.V1Secret> {
    * Watch Secrets for changes
    */
   watch(callback: WatchCallback<k8s.V1Secret>, options?: ResourceOperationOptions): () => void {
-    const namespace = options?.namespace;
-    const watch = new k8s.Watch(this.client.kubeConfig);
-    let aborted = false;
+    let stopWatching = false;
+    let request: unknown = null;
 
-    const startWatch = async () => {
+    const startWatch = async (): Promise<void> => {
       try {
-        const req = await watch.watch(
+        const namespace = options?.namespace;
+        const listOptions = this.buildListOptions(options);
+
+        const watch = new k8s.Watch(this.client.kubeConfig);
+        request = await watch.watch(
           `/api/v1/${namespace ? `namespaces/${namespace}/` : ''}secrets`,
-          this.buildListOptions(options),
+          listOptions,
           (type: string, obj: k8s.V1Secret) => {
-            if (!aborted) {
+            if (!stopWatching) {
               callback({
                 type: type as WatchEventType,
                 object: obj,
               });
             }
           },
-          (err: any) => {
-            if (!aborted) {
+          (err: unknown) => {
+            if (!stopWatching) {
               this.logger?.error(`Watch error for Secrets: ${err}`);
+              // For error events, we need to create a valid V1Secret-like object
+              const errorObj = {
+                apiVersion: 'v1',
+                kind: 'Secret',
+                metadata: { name: 'watch-error' },
+                data: { error: Buffer.from(String(err)).toString('base64') },
+              } as k8s.V1Secret;
+
               callback({
                 type: WatchEventType.ERROR,
-                object: err,
+                object: errorObj,
               });
             }
           },
         );
-
-        return req;
       } catch (error) {
         this.logger?.error(`Failed to start watch for Secrets: ${error}`);
         throw error;
       }
     };
 
-    let request: any;
-    startWatch().then((req) => {
-      request = req;
+    startWatch().catch((error) => {
+      this.logger?.error(`Failed to start Secret watch: ${error}`);
     });
 
     return () => {
-      aborted = true;
-      if (request) {
-        request.abort();
+      stopWatching = true;
+      if (request && typeof request === 'object' && request !== null && 'abort' in request) {
+        (request as { abort: () => void }).abort();
       }
     };
-  }
-
-  /**
-   * Create an Opaque Secret from string data
-   */
-  async createOpaque(
-    name: string,
-    stringData: { [key: string]: string },
-    options?: ResourceOperationOptions & { labels?: { [key: string]: string } },
-  ): Promise<k8s.V1Secret> {
-    const namespace = options?.namespace || 'default';
-
-    const secret: k8s.V1Secret = {
-      apiVersion: 'v1',
-      kind: 'Secret',
-      metadata: {
-        name,
-        namespace,
-        labels: options?.labels,
-      },
-      type: SecretType.OPAQUE,
-      stringData,
-    };
-
-    return this.create(secret, options);
-  }
-
-  /**
-   * Create a TLS Secret
-   */
-  async createTLS(
-    name: string,
-    tlsCert: string,
-    tlsKey: string,
-    options?: ResourceOperationOptions & { labels?: { [key: string]: string } },
-  ): Promise<k8s.V1Secret> {
-    const namespace = options?.namespace || 'default';
-
-    const secret: k8s.V1Secret = {
-      apiVersion: 'v1',
-      kind: 'Secret',
-      metadata: {
-        name,
-        namespace,
-        labels: options?.labels,
-      },
-      type: SecretType.TLS,
-      stringData: {
-        'tls.crt': tlsCert,
-        'tls.key': tlsKey,
-      },
-    };
-
-    return this.create(secret, options);
-  }
-
-  /**
-   * Create a Docker Registry Secret
-   */
-  async createDockerRegistry(
-    name: string,
-    server: string,
-    username: string,
-    password: string,
-    email?: string,
-    options?: ResourceOperationOptions & { labels?: { [key: string]: string } },
-  ): Promise<k8s.V1Secret> {
-    const namespace = options?.namespace || 'default';
-
-    const dockerConfig = {
-      auths: {
-        [server]: {
-          username,
-          password,
-          email: email || '',
-          auth: Buffer.from(`${username}:${password}`).toString('base64'),
-        },
-      },
-    };
-
-    const secret: k8s.V1Secret = {
-      apiVersion: 'v1',
-      kind: 'Secret',
-      metadata: {
-        name,
-        namespace,
-        labels: options?.labels,
-      },
-      type: SecretType.DOCKER_CONFIG_JSON,
-      stringData: {
-        '.dockerconfigjson': JSON.stringify(dockerConfig),
-      },
-    };
-
-    return this.create(secret, options);
-  }
-
-  /**
-   * Create a Basic Auth Secret
-   */
-  async createBasicAuth(
-    name: string,
-    username: string,
-    password: string,
-    options?: ResourceOperationOptions & { labels?: { [key: string]: string } },
-  ): Promise<k8s.V1Secret> {
-    const namespace = options?.namespace || 'default';
-
-    const secret: k8s.V1Secret = {
-      apiVersion: 'v1',
-      kind: 'Secret',
-      metadata: {
-        name,
-        namespace,
-        labels: options?.labels,
-      },
-      type: SecretType.BASIC_AUTH,
-      stringData: {
-        username,
-        password,
-      },
-    };
-
-    return this.create(secret, options);
-  }
-
-  /**
-   * Create an SSH Auth Secret
-   */
-  async createSSHAuth(
-    name: string,
-    privateKey: string,
-    options?: ResourceOperationOptions & { labels?: { [key: string]: string } },
-  ): Promise<k8s.V1Secret> {
-    const namespace = options?.namespace || 'default';
-
-    const secret: k8s.V1Secret = {
-      apiVersion: 'v1',
-      kind: 'Secret',
-      metadata: {
-        name,
-        namespace,
-        labels: options?.labels,
-      },
-      type: SecretType.SSH_AUTH,
-      stringData: {
-        'ssh-privatekey': privateKey,
-      },
-    };
-
-    return this.create(secret, options);
   }
 
   /**
@@ -411,53 +261,44 @@ export class SecretOperations extends BaseResourceOperations<k8s.V1Secret> {
   }
 
   /**
-   * Update or add a key-value pair in a Secret
+   * Get a secret with MCP tool-friendly formatting
    */
-  async setKey(
+  async getFormatted(
     name: string,
-    key: string,
-    value: string,
     options?: ResourceOperationOptions,
-  ): Promise<k8s.V1Secret> {
+  ): Promise<{
+    resourceType: string;
+    metadata: any;
+    type: string;
+    dataKeys: string[];
+    stringDataKeys: string[];
+  }> {
     try {
       const secret = await this.get(name, options);
 
-      // Convert existing data to stringData for easier manipulation
-      const decodedData = (await this.getDecodedData(name, options)) || {};
-      decodedData[key] = value;
-
-      // Clear data and use stringData for the update
-      secret.data = undefined;
-      secret.stringData = decodedData;
-
-      return this.update(secret, options);
+      // Note: Secret data is base64 encoded, we'll return keys only for security
+      return {
+        resourceType: 'secret',
+        metadata: this.formatResourceMetadata(secret),
+        type: secret.type || 'Opaque',
+        dataKeys: secret.data ? Object.keys(secret.data) : [],
+        stringDataKeys: secret.stringData ? Object.keys(secret.stringData) : [],
+      };
     } catch (error) {
-      this.handleApiError(error, 'SetKey', name);
+      this.handleApiError(error, 'GetFormatted', name);
     }
   }
 
-  /**
-   * Remove a key from a Secret
-   */
-  async removeKey(
-    name: string,
-    key: string,
-    options?: ResourceOperationOptions,
-  ): Promise<k8s.V1Secret> {
-    try {
-      const secret = await this.get(name, options);
-
-      // Convert existing data to stringData for easier manipulation
-      const decodedData = (await this.getDecodedData(name, options)) || {};
-      delete decodedData[key];
-
-      // Clear data and use stringData for the update
-      secret.data = undefined;
-      secret.stringData = decodedData;
-
-      return this.update(secret, options);
-    } catch (error) {
-      this.handleApiError(error, 'RemoveKey', name);
-    }
+  private formatResourceMetadata(resource: any): any {
+    return {
+      name: resource.metadata?.name,
+      namespace: resource.metadata?.namespace,
+      uid: resource.metadata?.uid,
+      resourceVersion: resource.metadata?.resourceVersion,
+      generation: resource.metadata?.generation,
+      creationTimestamp: resource.metadata?.creationTimestamp,
+      labels: resource.metadata?.labels || {},
+      annotations: resource.metadata?.annotations || {},
+    };
   }
 }

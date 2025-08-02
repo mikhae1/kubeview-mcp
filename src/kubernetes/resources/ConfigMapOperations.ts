@@ -1,49 +1,218 @@
-import { V1ConfigMap, V1ConfigMapList, Watch } from '@kubernetes/client-node';
+import * as k8s from '@kubernetes/client-node';
 import {
   BaseResourceOperations,
   ResourceOperationOptions,
   WatchCallback,
   WatchEventType,
-} from '../ResourceOperations';
-import { KubernetesClient } from '../KubernetesClient';
+} from '../BaseResourceOperations.js';
+import { KubernetesClient } from '../KubernetesClient.js';
 
 /**
- * ConfigMap operations implementation
+ * ConfigMap operations implementation - Read-only operations
  */
-export class ConfigMapOperations extends BaseResourceOperations<V1ConfigMap> {
+export class ConfigMapOperations extends BaseResourceOperations<k8s.V1ConfigMap> {
+  /**
+   * Regular expressions for detecting sensitive data patterns in keys
+   */
+  private readonly sensitiveKeyPatterns: RegExp[] = [
+    // Generic credentials
+    /(?:password|passwd|pwd)/gi,
+    /(?:secret|token)/gi,
+    /(?:api[_-]?(?:key|token|secret|password))/gi,
+    /(?:auth[_-]?(?:token|secret))/gi,
+    /(?:access(?:[_-]?key)?|access[_-]?token)/gi,
+    /(?:refresh[_-]?token)/gi,
+    /(?:client[_-]?(?:id|secret))/gi,
+    /(?:credential(?:s)?)/gi,
+
+    // Certificates & keys - improved patterns
+    /(?:private[_-]?(?:key|rsa|dsa|ecdsa|pem|pfx|pkcs12|p12))/gi,
+    /(?:rsa[_-]?key)/gi,
+    /(?:dsa[_-]?key)/gi,
+    /(?:ecdsa[_-]?key)/gi,
+    /(?:ssh[_-]?key)/gi,
+    /(?:tls|ssl|x509)[_-]?(?:cert|certificate|key)/gi,
+    /(?:cert(?:ificate)?|certfile)/gi,
+    /(?:jwt.*)/gi,
+    /(?:bearer.*)/gi,
+    /(?:ca\.crt|ca\.key|ca\.pem|ca\.pfx|ca\.pkcs12|ca\.p12)/gi,
+
+    // Session & cookie data
+    /(?:session[_-]?id)/gi,
+    /cookie/gi,
+
+    // Database & connection strings
+    /(?:db|database)[_-]?password/gi,
+    /(?:connection[_-]?string|dsn)/gi,
+  ];
+
+  private readonly sensitiveValuePatterns: RegExp[] = [
+    // JWT tokens (header.payload.signature)
+    /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+
+    // SSH keys (complete line including user@host)
+    /ssh-(?:rsa|dss|ed25519|ecdsa)\s+[A-Za-z0-9+/=]+[^\r\n]*/gi,
+
+    // API keys and tokens (common patterns) - improved to catch more variations
+    /\b(?:api[_-]?key|token|secret|auth[_-]?key|access[_-]?key)\s*[:=]\s*['"]?[A-Za-z0-9+/=_-]{16,}['"]?/gi,
+
+    // Secret-like strings with common prefixes (for test cases like "secret-key-...")
+    /(?:secret|key|token|api)[_-][A-Za-z0-9_-]{15,}/gi,
+
+    // Long alphanumeric strings that look like secrets (20+ chars)
+    /(?<!\w)[A-Za-z0-9]{20,}(?!\w)/g,
+
+    // AWS Secret Access Key pattern (40 chars base64-like)
+    /[A-Za-z0-9+/]{40}/g,
+
+    // Password patterns (more specific to avoid false positives)
+    /\b(?:password|passwd|pwd)\s*[:=]\s*['"]?[^\s'"]{6,}['"]?/gi,
+    /(?:password|passwd|pwd)>.*<?/gi,
+
+    // Database connection strings with credentials
+    /(?:postgresql|mysql|mongodb|redis):\/\/[^:]+:[^@]+@[^\s]+/gi,
+    /\b(?:host|server)\s*[:=]\s*[^;]+;\s*(?:user|uid)\s*[:=]\s*[^;]+;\s*(?:password|pwd)\s*[:=]\s*[^;]+/gi,
+
+    // Cloud provider keys
+    /\bAKIA[0-9A-Z]{16}\b/g, // AWS Access Key ID
+    /\bgcp[_-]?[A-Za-z0-9+/=_-]{32,}/gi, // GCP keys
+    /\bazure[_-]?[A-Za-z0-9+/=_-]{32,}/gi, // Azure keys
+
+    // Credit card numbers (basic pattern)
+    /\b(?:\d{4}[- ]?){3}\d{4}\b/g,
+  ];
+
   constructor(client: KubernetesClient) {
     super(client, 'ConfigMap');
   }
 
   /**
-   * Create a new ConfigMap
+   * Sanitize sensitive data in a ConfigMap
+   * @param configMap The ConfigMap to sanitize
+   * @returns A new ConfigMap with sensitive data replaced by "*** FILTERED ***"
    */
-  async create(configMap: V1ConfigMap, options?: ResourceOperationOptions): Promise<V1ConfigMap> {
-    try {
-      const namespace = options?.namespace || configMap.metadata?.namespace || 'default';
-      const response = await this.client.core.createNamespacedConfigMap({
-        namespace,
-        body: configMap,
-      });
-      this.logger?.info(
-        `Created ConfigMap '${configMap.metadata?.name}' in namespace '${namespace}'`,
-      );
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Create', configMap.metadata?.name);
+  sanitizeConfigMapData(configMap: k8s.V1ConfigMap): k8s.V1ConfigMap {
+    if (!configMap.data) {
+      return configMap;
     }
+
+    // Create a deep copy to avoid modifying the original
+    const sanitized: k8s.V1ConfigMap = JSON.parse(JSON.stringify(configMap));
+
+    // Sanitize each data value
+    for (const [key, value] of Object.entries(sanitized.data!)) {
+      if (typeof value === 'string') {
+        sanitized.data![key] = this.sanitizeKeyValue(key, value);
+      }
+    }
+
+    // Also sanitize binaryData if present
+    if (sanitized.binaryData) {
+      for (const [key, value] of Object.entries(sanitized.binaryData)) {
+        if (typeof value === 'string') {
+          // Check if it's valid base64 (only contains base64 characters and proper padding)
+          const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+          if (base64Regex.test(value)) {
+            try {
+              // Decode base64, sanitize, and re-encode
+              const decoded = Buffer.from(value, 'base64').toString('utf-8');
+              const sanitizedDecoded = this.sanitizeKeyValue(key, decoded);
+              sanitized.binaryData[key] = Buffer.from(sanitizedDecoded).toString('base64');
+            } catch {
+              // If decoding fails, treat as potentially sensitive binary data
+              sanitized.binaryData[key] = Buffer.from('*** FILTERED ***').toString('base64');
+            }
+          } else {
+            // Not valid base64, treat as potentially sensitive binary data
+            sanitized.binaryData[key] = Buffer.from('*** FILTERED ***').toString('base64');
+          }
+        }
+      }
+    }
+
+    return sanitized;
+  }
+
+  /**
+   * Sanitize a key-value pair, checking both key patterns and value patterns
+   * @param key The key name to check against sensitive patterns
+   * @param value The string value to sanitize
+   * @returns The sanitized string with sensitive data replaced
+   */
+  private sanitizeKeyValue(key: string, value: string): string {
+    // First check if the key itself indicates sensitive data
+    for (const pattern of this.sensitiveKeyPatterns) {
+      pattern.lastIndex = 0;
+      if (pattern.test(key)) {
+        return '*** FILTERED ***';
+      }
+    }
+
+    // If key doesn't match sensitive patterns, check value content
+    let sanitized = value;
+    for (const pattern of this.sensitiveValuePatterns) {
+      // Reset regex lastIndex to ensure consistent behavior
+      pattern.lastIndex = 0;
+      sanitized = sanitized.replace(pattern, '*** FILTERED ***');
+    }
+
+    return sanitized;
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async create(
+    _configMap: k8s.V1ConfigMap,
+    _options?: ResourceOperationOptions,
+  ): Promise<k8s.V1ConfigMap> {
+    throw new Error('Create operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async update(
+    _configMap: k8s.V1ConfigMap,
+    _options?: ResourceOperationOptions,
+  ): Promise<k8s.V1ConfigMap> {
+    throw new Error('Update operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async patch(
+    _name: string,
+    _patch: unknown,
+    _options?: ResourceOperationOptions,
+  ): Promise<k8s.V1ConfigMap> {
+    throw new Error('Patch operation is not supported in read-only mode');
+  }
+
+  /**
+   * @throws {Error} This operation is not supported in read-only mode
+   */
+  async delete(_name: string, _options?: ResourceOperationOptions): Promise<void> {
+    throw new Error('Delete operation is not supported in read-only mode');
   }
 
   /**
    * Get a ConfigMap by name
    */
-  async get(name: string, options?: ResourceOperationOptions): Promise<V1ConfigMap> {
+  async get(name: string, options?: ResourceOperationOptions): Promise<k8s.V1ConfigMap> {
     try {
       const namespace = options?.namespace || 'default';
-      const response = await this.client.core.readNamespacedConfigMap({
+      let response = await this.client.core.readNamespacedConfigMap({
         name,
         namespace,
       });
+
+      // Apply sanitization if requested
+      if (!options?.skipSanitize) {
+        response = this.sanitizeConfigMapData(response);
+      }
+
       return response;
     } catch (error) {
       this.handleApiError(error, 'Get', name);
@@ -51,67 +220,9 @@ export class ConfigMapOperations extends BaseResourceOperations<V1ConfigMap> {
   }
 
   /**
-   * Update a ConfigMap
+   * List ConfigMaps with optional data sanitization
    */
-  async update(configMap: V1ConfigMap, options?: ResourceOperationOptions): Promise<V1ConfigMap> {
-    try {
-      const namespace = options?.namespace || configMap.metadata?.namespace || 'default';
-      const name = configMap.metadata?.name;
-      if (!name) {
-        throw new Error('ConfigMap name is required for update');
-      }
-      const response = await this.client.core.replaceNamespacedConfigMap({
-        name,
-        namespace,
-        body: configMap,
-      });
-      this.logger?.info(`Updated ConfigMap '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Update', configMap.metadata?.name);
-    }
-  }
-
-  /**
-   * Patch a ConfigMap
-   */
-  async patch(name: string, patch: any, options?: ResourceOperationOptions): Promise<V1ConfigMap> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const response = await this.client.core.patchNamespacedConfigMap({
-        name,
-        namespace,
-        body: patch,
-      });
-      this.logger?.info(`Patched ConfigMap '${name}' in namespace '${namespace}'`);
-      return response;
-    } catch (error) {
-      this.handleApiError(error, 'Patch', name);
-    }
-  }
-
-  /**
-   * Delete a ConfigMap
-   */
-  async delete(name: string, options?: ResourceOperationOptions): Promise<void> {
-    try {
-      const namespace = options?.namespace || 'default';
-      const deleteOptions = this.buildDeleteOptions(options);
-      await this.client.core.deleteNamespacedConfigMap({
-        name,
-        namespace,
-        body: deleteOptions,
-      });
-      this.logger?.info(`Deleted ConfigMap '${name}' from namespace '${namespace}'`);
-    } catch (error) {
-      this.handleApiError(error, 'Delete', name);
-    }
-  }
-
-  /**
-   * List ConfigMaps
-   */
-  async list(options?: ResourceOperationOptions): Promise<V1ConfigMapList> {
+  async list(options?: ResourceOperationOptions): Promise<k8s.V1ConfigMapList> {
     try {
       const namespace = options?.namespace;
       const listOptions = this.buildListOptions(options);
@@ -148,6 +259,33 @@ export class ConfigMapOperations extends BaseResourceOperations<V1ConfigMap> {
         });
       }
 
+      // Sanitize sensitive data if requested
+      if (!options?.skipSanitize) {
+        response.items = response.items.map((item) => this.sanitizeConfigMapData(item));
+      }
+
+      response.items = response.items.map((item) => ({
+        ...item,
+        name: item.metadata?.name,
+        namespace: item.metadata?.namespace,
+        metadata: {
+          labels: item.metadata?.labels,
+          annotations: item.metadata?.annotations,
+          creationTimestamp: item.metadata?.creationTimestamp,
+        },
+      }));
+
+      // Remove data from response if namespace is not provided
+      if (!namespace) {
+        response.items = response.items.map((item) => ({
+          ...item,
+          creationTimestamp: item.metadata?.creationTimestamp,
+          data: undefined,
+          binaryData: undefined,
+          metadata: undefined,
+        }));
+      }
+
       return response;
     } catch (error) {
       this.handleApiError(error, 'List');
@@ -157,174 +295,73 @@ export class ConfigMapOperations extends BaseResourceOperations<V1ConfigMap> {
   /**
    * Watch ConfigMaps for changes
    */
-  watch(callback: WatchCallback<V1ConfigMap>, options?: ResourceOperationOptions): () => void {
-    const namespace = options?.namespace;
-    const watch = new Watch(this.client.kubeConfig);
-    let aborted = false;
+  watch(callback: WatchCallback<k8s.V1ConfigMap>, options?: ResourceOperationOptions): () => void {
+    let stopWatching = false;
+    let request: unknown = null;
 
-    const startWatch = async () => {
+    const startWatch = async (): Promise<void> => {
       try {
-        const req = await watch.watch(
+        const namespace = options?.namespace;
+        const listOptions = this.buildListOptions(options);
+
+        const watch = new k8s.Watch(this.client.kubeConfig);
+        request = await watch.watch(
           `/api/v1/${namespace ? `namespaces/${namespace}/` : ''}configmaps`,
-          this.buildListOptions(options),
-          (type: string, obj: V1ConfigMap) => {
-            if (!aborted) {
+          listOptions,
+          (type: string, obj: k8s.V1ConfigMap) => {
+            if (!stopWatching) {
               callback({
                 type: type as WatchEventType,
                 object: obj,
               });
             }
           },
-          (err: any) => {
-            if (!aborted) {
+          (err: unknown) => {
+            if (!stopWatching) {
               this.logger?.error(`Watch error for ConfigMaps: ${err}`);
+              // For error events, we need to create a valid V1ConfigMap-like object
+              // or handle the error differently since the callback expects V1ConfigMap
+              const errorObj = {
+                apiVersion: 'v1',
+                kind: 'ConfigMap',
+                metadata: { name: 'watch-error' },
+                data: { error: String(err) },
+              } as k8s.V1ConfigMap;
+
               callback({
                 type: WatchEventType.ERROR,
-                object: err,
+                object: errorObj,
               });
             }
           },
         );
-
-        return req;
       } catch (error) {
         this.logger?.error(`Failed to start watch for ConfigMaps: ${error}`);
         throw error;
       }
     };
 
-    let request: any;
-    startWatch().then((req) => {
-      request = req;
+    startWatch().catch((error) => {
+      this.logger?.error(`Failed to start ConfigMap watch: ${error}`);
     });
 
     return () => {
-      aborted = true;
-      if (request) {
-        request.abort();
+      stopWatching = true;
+      if (request && typeof request === 'object' && request !== null && 'abort' in request) {
+        (request as { abort: () => void }).abort();
       }
     };
   }
 
   /**
-   * Create a ConfigMap from key-value pairs
-   */
-  async createFromData(
-    name: string,
-    data: { [key: string]: string },
-    options?: ResourceOperationOptions & { labels?: { [key: string]: string } },
-  ): Promise<V1ConfigMap> {
-    const namespace = options?.namespace || 'default';
-
-    const configMap: V1ConfigMap = {
-      apiVersion: 'v1',
-      kind: 'ConfigMap',
-      metadata: {
-        name,
-        namespace,
-        labels: options?.labels,
-      },
-      data,
-    };
-
-    return this.create(configMap, options);
-  }
-
-  /**
-   * Create a ConfigMap from files (binary data)
-   */
-  async createFromBinaryData(
-    name: string,
-    binaryData: { [key: string]: string },
-    options?: ResourceOperationOptions & { labels?: { [key: string]: string } },
-  ): Promise<V1ConfigMap> {
-    const namespace = options?.namespace || 'default';
-
-    const configMap: V1ConfigMap = {
-      apiVersion: 'v1',
-      kind: 'ConfigMap',
-      metadata: {
-        name,
-        namespace,
-        labels: options?.labels,
-      },
-      binaryData,
-    };
-
-    return this.create(configMap, options);
-  }
-
-  /**
-   * Add or update a key in a ConfigMap
-   */
-  async setKey(
-    name: string,
-    key: string,
-    value: string,
-    options?: ResourceOperationOptions,
-  ): Promise<V1ConfigMap> {
-    try {
-      const configMap = await this.get(name, options);
-
-      if (!configMap.data) {
-        configMap.data = {};
-      }
-
-      configMap.data[key] = value;
-
-      return this.update(configMap, options);
-    } catch (error) {
-      this.handleApiError(error, 'SetKey', name);
-    }
-  }
-
-  /**
-   * Remove a key from a ConfigMap
-   */
-  async removeKey(
-    name: string,
-    key: string,
-    options?: ResourceOperationOptions,
-  ): Promise<V1ConfigMap> {
-    try {
-      const configMap = await this.get(name, options);
-
-      if (configMap.data && configMap.data[key]) {
-        delete configMap.data[key];
-      }
-
-      if (configMap.binaryData && configMap.binaryData[key]) {
-        delete configMap.binaryData[key];
-      }
-
-      return this.update(configMap, options);
-    } catch (error) {
-      this.handleApiError(error, 'RemoveKey', name);
-    }
-  }
-
-  /**
-   * Get value of a specific key from a ConfigMap
+   * Get a value from a ConfigMap by key
    */
   async getValue(
     name: string,
     key: string,
     options?: ResourceOperationOptions,
   ): Promise<string | undefined> {
-    try {
-      const configMap = await this.get(name, options);
-
-      if (configMap.data && configMap.data[key]) {
-        return configMap.data[key];
-      }
-
-      if (configMap.binaryData && configMap.binaryData[key]) {
-        return configMap.binaryData[key];
-      }
-
-      return undefined;
-    } catch (error) {
-      this.handleApiError(error, 'GetValue', name);
-    }
+    const configMap = await this.get(name, options);
+    return configMap.data?.[key];
   }
 }

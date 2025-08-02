@@ -25,9 +25,16 @@ node_modules/
 # OS specific
 .DS_Store
 
+dist*/
+
+TODO.md
+
 # Task files
 tasks/
+**/prd.*
+.roo
+.roo/*
 .task*
 .roomodes
 .*rules*
-dist/
+scripts/task*

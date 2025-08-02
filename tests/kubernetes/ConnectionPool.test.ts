@@ -14,6 +14,7 @@ describe('ConnectionPool', () => {
   let mockLogger: Logger;
   let mockKubeConfig: jest.Mocked<k8s.KubeConfig>;
   let mockCoreV1Api: jest.Mocked<k8s.CoreV1Api>;
+  let pools: ConnectionPool[] = [];
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -36,11 +37,25 @@ describe('ConnectionPool', () => {
     } as any;
 
     mockKubeConfigFactory = jest.fn().mockReturnValue(mockKubeConfig);
+    pools = [];
+  });
+
+  const createPool = (config?: ConnectionPoolConfig): ConnectionPool => {
+    const pool = new ConnectionPool('test-context', mockKubeConfigFactory, config);
+    pools.push(pool);
+    return pool;
+  };
+
+  afterEach(async () => {
+    for (const pool of pools) {
+      await pool.dispose();
+    }
+    pools = [];
   });
 
   describe('Constructor', () => {
     it('should create a connection pool with default config', () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory);
+      const pool = createPool();
       expect(pool).toBeDefined();
       expect(pool.stats.total).toBe(0);
     });
@@ -53,7 +68,7 @@ describe('ConnectionPool', () => {
         enableWarmup: false,
       };
 
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, config);
+      const pool = createPool(config);
       expect(pool).toBeDefined();
       expect(mockLogger.info).toHaveBeenCalledWith(
         'Creating connection pool for context: test-context',
@@ -68,7 +83,7 @@ describe('ConnectionPool', () => {
         logger: mockLogger,
       };
 
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, config);
+      const pool = createPool(config);
 
       // Wait for warmup to complete
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -81,22 +96,29 @@ describe('ConnectionPool', () => {
 
   describe('Connection Management', () => {
     it('should acquire a connection successfully', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });
+      pools.push(pool);
 
       const conn = await pool.acquire();
       expect(conn).toBeDefined();
       expect(conn.state).toBe(ConnectionState.IN_USE);
       expect(pool.stats.inUse).toBe(1);
+
+      pool.release(conn);
+      expect(pool.stats.idle).toBe(1);
+      expect(pool.stats.inUse).toBe(0);
+      expect(conn.state).toBe(ConnectionState.IDLE);
     });
 
     it('should reuse idle connections', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });
+      pools.push(pool);
 
       const conn1 = await pool.acquire();
       pool.release(conn1);
@@ -107,11 +129,12 @@ describe('ConnectionPool', () => {
     });
 
     it('should create new connections up to max limit', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         maxConnections: 2,
         enableWarmup: false,
         logger: mockLogger,
       });
+      pools.push(pool);
 
       const conn1 = await pool.acquire();
       const conn2 = await pool.acquire();
@@ -122,12 +145,13 @@ describe('ConnectionPool', () => {
     });
 
     it('should wait for available connection when at max limit', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         maxConnections: 1,
         acquireTimeout: 1000,
         enableWarmup: false,
         logger: mockLogger,
       });
+      pools.push(pool);
 
       const conn1 = await pool.acquire();
 
@@ -145,12 +169,13 @@ describe('ConnectionPool', () => {
     });
 
     it('should timeout when waiting too long', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         maxConnections: 1,
         acquireTimeout: 100,
         enableWarmup: false,
         logger: mockLogger,
       });
+      pools.push(pool);
 
       await pool.acquire();
 
@@ -158,10 +183,11 @@ describe('ConnectionPool', () => {
     });
 
     it('should release connections properly', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });
+      pools.push(pool);
 
       const conn = await pool.acquire();
       expect(pool.stats.inUse).toBe(1);
@@ -175,7 +201,7 @@ describe('ConnectionPool', () => {
 
   describe('Health Checks', () => {
     it('should mark unhealthy connections', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         healthCheckRetries: 1,
         enableWarmup: false,
         logger: mockLogger,
@@ -193,7 +219,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should recover unhealthy connections', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });
@@ -215,7 +241,7 @@ describe('ConnectionPool', () => {
 
   describe('Connection Lifecycle', () => {
     it('should track connection usage', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });
@@ -229,7 +255,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should remove idle expired connections', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         minConnections: 0,
         maxIdleTime: 100,
         enableWarmup: false,
@@ -249,7 +275,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should maintain minimum connections', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         minConnections: 2,
         maxIdleTime: 100,
         enableWarmup: true,
@@ -271,7 +297,7 @@ describe('ConnectionPool', () => {
 
   describe('Pool Disposal', () => {
     it('should dispose all connections', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         minConnections: 2,
         enableWarmup: true,
         logger: mockLogger,
@@ -287,7 +313,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should reject new acquisitions after disposal', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });
@@ -298,7 +324,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should clear waiting queue on disposal', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         maxConnections: 1,
         enableWarmup: false,
         logger: mockLogger,
@@ -316,7 +342,7 @@ describe('ConnectionPool', () => {
 
   describe('Events', () => {
     it('should emit connection events', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });
@@ -338,7 +364,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should emit disposal event', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });
@@ -355,7 +381,7 @@ describe('ConnectionPool', () => {
     it('should handle connection creation failures', async () => {
       mockCoreV1Api.listNamespace.mockRejectedValue(new Error('Auth failed'));
 
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });
@@ -364,7 +390,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should not release non-in-use connections', () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });
@@ -384,7 +410,7 @@ describe('ConnectionPool', () => {
 
   describe('API Client Creation', () => {
     it('should create API clients through connection', async () => {
-      const pool = new ConnectionPool('test-context', mockKubeConfigFactory, {
+      const pool = createPool({
         enableWarmup: false,
         logger: mockLogger,
       });

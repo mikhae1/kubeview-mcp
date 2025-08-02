@@ -47,14 +47,23 @@ describe('MCPServer', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    server = new MCPServer();
+    server = new MCPServer({
+      skipTransportErrorHandling: true,
+      skipGracefulShutdown: true,
+    });
     mockConsoleLog = jest.spyOn(console, 'log').mockImplementation(() => {});
     mockConsoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     mockConsoleLog.mockRestore();
     mockConsoleError.mockRestore();
+
+    // Cleanup server resources
+    if (server) {
+      server.cleanup();
+      await server.stop();
+    }
   });
 
   describe('constructor', () => {
@@ -272,20 +281,20 @@ describe('MCPServer', () => {
   describe('graceful shutdown', () => {
     let mockExit: jest.SpiedFunction<typeof process.exit>;
     let originalProcessOn: typeof process.on;
-    let processHandlers: { [key: string]: Function } = {};
+    let processHandlers: { [key: string]: (...args: unknown[]) => void } = {};
 
     beforeEach(() => {
       mockExit = jest.spyOn(process, 'exit').mockImplementation(() => undefined as never);
       originalProcessOn = process.on;
 
       // Mock process.on to capture handlers
-      process.on = jest.fn((event: string, handler: Function) => {
+      process.on = jest.fn((event: string, handler: (...args: unknown[]) => void) => {
         processHandlers[event] = handler;
         return process;
       }) as any;
 
-      // Create a new server to register handlers
-      server = new MCPServer();
+      // Create a new server to register handlers (allow graceful shutdown for testing)
+      server = new MCPServer({ skipTransportErrorHandling: true });
     });
 
     afterEach(() => {
