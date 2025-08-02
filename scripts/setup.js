@@ -148,7 +148,7 @@ class SetupManager {
   createMcpServerConfig() {
     return {
       command: 'npx',
-      args: ['https://github.com/mikhae1/kubeview-mcp'],
+      args: ['-y', 'https://github.com/mikhae1/kubeview-mcp'],
       env: {
         KUBECONFIG: process.env.KUBECONFIG || this.defaultKubeconfig
       }
