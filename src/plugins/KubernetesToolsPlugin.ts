@@ -1,6 +1,6 @@
 // TODO: All commands should be imported from the tools/kubernetes/index.ts file
 
-import { MCPPlugin, MCPServer } from '../server/MCPServer.js';
+import { MCPServer } from '../server/MCPServer.js';
 import { KubernetesClient, KubernetesClientConfig } from '../kubernetes/KubernetesClient.js';
 import winston from 'winston';
 import {
@@ -20,25 +20,28 @@ import {
   GetPersistentVolumesTool,
   GetPersistentVolumeClaimsTool,
 } from '../tools/kubernetes/index.js';
+import { BaseToolsPlugin } from './BaseToolsPlugin.js';
 
 /**
  * Plugin that registers Kubernetes tools with the MCP server
  */
-export class KubernetesToolsPlugin implements MCPPlugin {
+export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
   name = 'kubernetes-tools';
   version = '0.1.0';
 
-  private commands: BaseTool[] = [];
-  private logger?: MCPServer['logger'];
-  private commandMap: Map<string, BaseTool> = new Map();
+  private clientCacheByContext: Map<string, KubernetesClient> = new Map();
+  private lastUsedAtByContext: Map<string, number> = new Map();
+  private clientTtlMs = 60_000; // reuse client within TTL to reduce overhead
 
-  constructor(private config?: KubernetesClientConfig) {}
+  constructor(private config?: KubernetesClientConfig) {
+    super();
+  }
 
   /**
    * Create the list of all available tool instances
    * This is the single source of truth for all tools in the plugin
    */
-  private static createToolInstances(): BaseTool[] {
+  protected createToolInstances(): BaseTool[] {
     return [
       new GetPodsTool(),
       new GetPodMetricsTool(),
@@ -61,7 +64,7 @@ export class KubernetesToolsPlugin implements MCPPlugin {
    * Get all command names from the tool instances
    */
   static getCommandNames(): string[] {
-    return this.createToolInstances().map((tool) => tool.tool.name);
+    return new KubernetesToolsPlugin().createToolInstances().map((tool) => tool.tool.name);
   }
 
   /**
@@ -89,54 +92,54 @@ export class KubernetesToolsPlugin implements MCPPlugin {
    * @param params Parameters for the command
    * @returns The result of the command execution
    */
-  static async executeCommand(commandName: string, params: Record<string, any>): Promise<any> {
+  static async executeCommand(commandName: string, params: Record<string, unknown>): Promise<any> {
+    if (
+      process.env.DISABLE_KUBERNETES_PLUGIN === 'true' ||
+      process.env.DISABLE_KUBERNETES_PLUGIN === '1'
+    ) {
+      throw new Error('Kubernetes plugin is disabled');
+    }
+
     const plugin = new KubernetesToolsPlugin();
-
-    // Initialize commands using the centralized method
-    plugin.commands = this.createToolInstances();
-
-    // Create map of commands
-    for (const command of plugin.commands) {
-      plugin.commandMap.set(command.tool.name, command);
-    }
-
-    const command = plugin.commandMap.get(commandName);
-    if (!command) {
-      throw new Error(`Unknown tool: ${commandName}`);
-    }
+    plugin.commands = plugin.createToolInstances();
+    plugin.buildCommandMap();
 
     const logger = this.createLogger();
-    // Initialize Kubernetes client with optional logger
     const client = new KubernetesClient(logger ? { logger } : {});
-
-    // Always refresh the current context to ensure we're using the latest kubeconfig
     await client.refreshCurrentContext();
-
     const connected = await client.testConnection();
     if (!connected) {
       throw new Error('Failed to connect to Kubernetes cluster');
     }
 
-    try {
-      // Execute the command
-      return await command.execute(params, client);
-    } finally {
-      // No cleanup needed since connection pooling was removed
-    }
+    const cmd = plugin.commandMap.get(commandName);
+    if (!cmd) throw new Error(`Unknown tool: ${commandName}`);
+    return cmd.execute(params as any, client);
   }
 
-  private async createNewClient(): Promise<KubernetesClient> {
+  private async createOrReuseClient(): Promise<KubernetesClient> {
     try {
-      const client = new KubernetesClient(this.config);
+      // Reuse client by current context if available and not expired
+      const tempClientForContext = new KubernetesClient(this.config);
+      await tempClientForContext.refreshCurrentContext();
+      const contextName = tempClientForContext.getCurrentContext();
 
-      // Always refresh the current context to ensure we're using the latest kubeconfig
-      await client.refreshCurrentContext();
+      const now = Date.now();
+      const lastUsed = this.lastUsedAtByContext.get(contextName) ?? 0;
+      const cached = this.clientCacheByContext.get(contextName);
+      if (cached && now - lastUsed < this.clientTtlMs) {
+        this.lastUsedAtByContext.set(contextName, now);
+        return cached;
+      }
 
+      const client = tempClientForContext; // reuse the prepared client
       const connected = await client.testConnection();
       if (!connected) {
         throw new Error('Failed to connect to Kubernetes cluster');
       }
-      this.logger?.info('New Kubernetes client created and connected successfully');
+      this.logger?.info('Kubernetes client ready');
+      this.clientCacheByContext.set(contextName, client);
+      this.lastUsedAtByContext.set(contextName, now);
       return client;
     } catch (error) {
       this.logger?.error('Failed to create new Kubernetes client', error);
@@ -149,7 +152,7 @@ export class KubernetesToolsPlugin implements MCPPlugin {
 
     try {
       // Initialize commands using the centralized method
-      this.commands = KubernetesToolsPlugin.createToolInstances();
+      this.commands = this.createToolInstances();
 
       // Create a map of command names to command instances
       for (const command of this.commands) {
@@ -158,9 +161,9 @@ export class KubernetesToolsPlugin implements MCPPlugin {
 
       // Register each command with the server
       for (const command of this.commands) {
-        server.registerTool(command.tool, async (params: any) => {
-          const client = await this.createNewClient();
-          return command.execute(params, client);
+        server.registerTool(command.tool, async (params: unknown) => {
+          const client = await this.createOrReuseClient();
+          return command.execute(params as any, client);
         });
       }
 
@@ -186,13 +189,15 @@ export class KubernetesToolsPlugin implements MCPPlugin {
     }
 
     return async (params: any) => {
-      const client = await this.createNewClient();
+      const client = await this.createOrReuseClient();
       // Context refresh is already handled in createNewClient()
       return command.execute(params, client);
     };
   }
 
   async shutdown(): Promise<void> {
-    // No need to explicitly close the client as it's handled by the server
+    // Clear cached clients
+    this.clientCacheByContext.clear();
+    this.lastUsedAtByContext.clear();
   }
 }
