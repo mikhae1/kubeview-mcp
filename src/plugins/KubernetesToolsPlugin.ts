@@ -177,6 +177,17 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
   }
 
   /**
+   * Re-initialize Kubernetes context for a new conversation by clearing
+   * any cached clients so the next tool execution constructs a fresh client
+   * from the current kubeconfig context.
+   */
+  async onNewConversation(): Promise<void> {
+    this.logger?.info('New conversation detected: clearing Kubernetes client cache');
+    this.clientCacheByContext.clear();
+    this.lastUsedAtByContext.clear();
+  }
+
+  /**
    * Get a function that executes a specific tool by name
    * @param toolName The name of the tool to execute
    * @returns A function that takes parameters and executes the tool, or undefined if the tool doesn't exist

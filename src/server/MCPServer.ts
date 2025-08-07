@@ -22,6 +22,12 @@ export interface MCPPlugin {
   version: string;
   initialize(server: MCPServer): Promise<void>;
   shutdown?(): Promise<void>;
+  /**
+   * Optional hook invoked when a new conversation starts.
+   * Servers typically receive a tools listing at the beginning of a session,
+   * so this hook is called from the ListTools handler.
+   */
+  onNewConversation?(): Promise<void>;
 }
 
 /**
@@ -231,6 +237,20 @@ export class MCPServer {
   private setupHandlers(): void {
     // Handle tool listing
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      // Notify plugins that a new conversation has started. Most MCP clients
+      // request tool listings at the start of a session.
+      for (const plugin of this.plugins.values()) {
+        if (typeof plugin.onNewConversation === 'function') {
+          try {
+            await plugin.onNewConversation();
+          } catch (err) {
+            this.logger.warn('Plugin onNewConversation hook failed', {
+              plugin: plugin.name,
+              error: err,
+            });
+          }
+        }
+      }
       const tools = Array.from(this.tools.values()).map((entry) => entry.tool);
       this.logger.debug(`Listing ${tools.length} tools`);
       return { tools };
