@@ -44,10 +44,18 @@ export class GetMetricsTool implements BaseTool {
     const prometheusQueries = params.prometheusQueries ?? [];
     const fetchPodSpecs = params.fetchPodSpecs ?? true;
 
-    return await metricOperations.getMetricsWithOptions(
+    const result = await metricOperations.getMetricsWithOptions(
       prometheusQueries,
       fetchPodSpecs,
       namespace,
     );
+
+    // Provide an LLM-ready summary alongside the normalized data
+    const summary = metricOperations.buildLLMSummary(
+      result.normalizedNodes || [],
+      result.normalizedPods || [],
+    );
+
+    return { ...result, summary };
   }
 }

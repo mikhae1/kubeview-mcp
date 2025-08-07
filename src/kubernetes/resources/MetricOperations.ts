@@ -60,14 +60,18 @@ export interface PodMetricsList {
 
 // Prometheus-related constants
 const PROMETHEUS_ANNOTATION_SCRAPE = 'prometheus.io/scrape';
-const PROMETHEUS_ANNOTATION_PATH = 'prometheus.io/path';
-const PROMETHEUS_ANNOTATION_PORT = 'prometheus.io/port';
+// Deprecated scrape hints for direct /metrics scraping; kept for reference but not used for query API
+// const PROMETHEUS_ANNOTATION_PATH = 'prometheus.io/path';
+// const PROMETHEUS_ANNOTATION_PORT = 'prometheus.io/port';
 
 // Define an interface for a discovered Prometheus target
 export interface PrometheusTarget {
-  url: string; // Full URL, e.g., http://service-ip:port/metrics-path
+  url: string; // Base URL, e.g., http://service-ip:port
   serviceName: string;
   namespace: string;
+  port?: number;
+  scheme?: 'http' | 'https';
+  kind?: 'prometheus' | 'thanos' | 'victoriametrics' | 'unknown';
   // Potentially add more metadata here later, like scrape interval from annotations
 }
 
@@ -358,73 +362,142 @@ export class MetricOperations {
    */
   public async discoverPrometheusTargets(namespace?: string): Promise<PrometheusTarget[]> {
     this.logger?.debug?.(
-      `Starting Prometheus target discovery in namespace: ${namespace || 'all'}`,
+      `Starting Prometheus-like target discovery in namespace: ${namespace || 'all'}`,
     );
     const newTargets: PrometheusTarget[] = [];
 
+    const isPrometheusLikeService = (svcName?: string, labels?: Record<string, string>) => {
+      const name = (svcName || '').toLowerCase();
+      const labelPairs = labels || {};
+      const labelVals = Object.values(labelPairs).map((v) => (v || '').toLowerCase());
+      const labelKeys = Object.keys(labelPairs).map((k) => k.toLowerCase());
+
+      const nameHints = [
+        'prometheus',
+        'kube-prometheus',
+        'kube-prometheus-stack-prometheus',
+        'prometheus-operated',
+        'thanos',
+        'thanos-query',
+        'victoriametrics',
+        'vmselect',
+        'vmsingle',
+      ];
+      const labelHints = [
+        'prometheus',
+        'kube-prometheus',
+        'prometheus-operator',
+        'thanos',
+        'victoriametrics',
+        'vmselect',
+      ];
+
+      if (nameHints.some((h) => name.includes(h))) return true;
+      if (labelVals.some((v) => labelHints.some((h) => v.includes(h)))) return true;
+      if (labelPairs['app'] && labelHints.includes(labelPairs['app'].toLowerCase())) return true;
+      if (
+        labelPairs['app.kubernetes.io/name'] &&
+        labelHints.some((h) => labelPairs['app.kubernetes.io/name'].toLowerCase().includes(h))
+      )
+        return true;
+      if (
+        labelKeys.some((k) =>
+          ['prometheus', 'thanos', 'victoriametrics', 'vmselect'].some((h) => k.includes(h)),
+        )
+      )
+        return true;
+      return false;
+    };
+
     try {
-      let serviceList: V1ServiceList; // serviceList will directly be V1ServiceList
+      let serviceList: V1ServiceList;
       if (namespace) {
-        // Assuming the method directly returns V1ServiceList
         serviceList = await this.k8sClient.core.listNamespacedService({ namespace });
       } else {
         serviceList = await this.k8sClient.core.listServiceForAllNamespaces();
       }
 
-      // Now serviceList is V1ServiceList, so access .items directly.
       if (serviceList && serviceList.items) {
         for (const service of serviceList.items) {
           const metadata = service.metadata;
-          const annotations = metadata?.annotations;
+          const annotations = metadata?.annotations || ({} as Record<string, string>);
+          const labels = metadata?.labels || ({} as Record<string, string>);
 
-          if (annotations && annotations[PROMETHEUS_ANNOTATION_SCRAPE] === 'true') {
-            const serviceName = metadata?.name;
-            const serviceNamespace = metadata?.namespace;
-            const clusterIP = service.spec?.clusterIP;
+          const serviceName = metadata?.name;
+          const serviceNamespace = metadata?.namespace;
+          const clusterIP = service.spec?.clusterIP;
 
-            if (!serviceName || !serviceNamespace || !clusterIP || clusterIP === 'None') {
-              this.logger?.debug?.(
-                `Skipping Prometheus target for service ${serviceName || 'unknown'} in ${serviceNamespace || 'unknown'} due to missing name, namespace, or ClusterIP.`,
-              );
-              continue;
-            }
+          if (!serviceName || !serviceNamespace) continue;
 
-            const path = annotations[PROMETHEUS_ANNOTATION_PATH] || '/metrics';
-            let portString = annotations[PROMETHEUS_ANNOTATION_PORT];
-
-            if (!portString && service.spec?.ports && service.spec.ports.length > 0) {
-              const httpPort = service.spec.ports.find(
-                (p: V1ServicePort) => p.name === 'http' || p.name === 'metrics',
-              );
-              portString = httpPort ? String(httpPort.port) : String(service.spec.ports[0].port);
-            }
-
-            if (!portString) {
-              this.logger?.warn(
-                `Could not determine port for Prometheus target ${serviceName} in ${serviceNamespace}. Skipping.`,
-              );
-              continue;
-            }
-
-            const targetUrl = `http://${clusterIP}:${portString}${path.startsWith('/') ? path : '/' + path}`;
-            const newTarget: PrometheusTarget = {
-              url: targetUrl,
-              serviceName: serviceName,
-              namespace: serviceNamespace,
-            };
-            newTargets.push(newTarget);
-            this.logger?.debug?.(
-              `Discovered Prometheus target: ${newTarget.url} from service ${serviceNamespace}/${serviceName}`,
-            );
+          // Identify only services that likely expose a query-compatible API
+          if (!isPrometheusLikeService(serviceName, labels)) {
+            // As a very last resort, allow explicit opt-in via annotation
+            if (annotations[PROMETHEUS_ANNOTATION_SCRAPE] !== 'true') continue;
           }
+
+          // Determine scheme and port
+          const ports = service.spec?.ports || [];
+          const preferredPortNames = [
+            'web',
+            'http',
+            'prometheus',
+            'http-web',
+            'http-query',
+            'query',
+          ];
+          let chosenPort: V1ServicePort | undefined =
+            ports.find((p) => p.name && preferredPortNames.includes(p.name)) || ports[0];
+
+          if (!chosenPort) {
+            this.logger?.debug?.(
+              `Skipping ${serviceNamespace}/${serviceName} - no ports available`,
+            );
+            continue;
+          }
+
+          const isHttpsAnnotation =
+            (annotations['prometheus.io/scheme'] || '').toLowerCase() === 'https';
+          const isHttpsByName = (chosenPort.name || '').toLowerCase().includes('https');
+          const isHttpsByPort = chosenPort.port === 443 || chosenPort.port === 8443;
+          const scheme: 'http' | 'https' =
+            isHttpsAnnotation || isHttpsByName || isHttpsByPort ? 'https' : 'http';
+
+          // Skip headless services with no ClusterIP
+          if (!clusterIP || clusterIP === 'None') {
+            this.logger?.debug?.(
+              `Skipping ${serviceNamespace}/${serviceName} - headless or no ClusterIP`,
+            );
+            continue;
+          }
+
+          // Determine kind heuristic
+          const lower = serviceName.toLowerCase();
+          const kind: PrometheusTarget['kind'] = lower.includes('thanos')
+            ? 'thanos'
+            : lower.includes('victoria') || lower.includes('vm')
+              ? 'victoriametrics'
+              : 'prometheus';
+
+          const baseUrl = `${scheme}://${clusterIP}:${chosenPort.port}`;
+          const newTarget: PrometheusTarget = {
+            url: baseUrl,
+            serviceName,
+            namespace: serviceNamespace,
+            port: chosenPort.port,
+            scheme,
+            kind,
+          };
+          newTargets.push(newTarget);
+          this.logger?.debug?.(
+            `Discovered ${newTarget.kind} target: ${baseUrl} from service ${serviceNamespace}/${serviceName}`,
+          );
         }
       }
     } catch (error: any) {
       this.logger?.error(`Error discovering Prometheus targets: ${error.message}`, error);
-      // Depending on desired behavior, might re-throw or return empty/partial list
     }
 
-    this.discoveredPrometheusTargets = newTargets; // Replace or merge as needed
+    this.discoveredPrometheusTargets = newTargets;
     this.logger?.debug?.(
       `Prometheus target discovery finished. Found ${newTargets.length} targets.`,
     );
@@ -523,7 +596,8 @@ export class MetricOperations {
     for (const target of this.discoveredPrometheusTargets) {
       const result = await this.queryPrometheusTarget(target, promqlQuery);
       if (result) {
-        allResults.push({ target: target.url, data: result });
+        // Push raw result to simplify downstream normalization logic
+        allResults.push(result);
       }
     }
     return allResults;
@@ -725,9 +799,18 @@ export class MetricOperations {
             };
             const mappedType =
               metricTypeMap[(promResult.data.resultType as string) ?? ''] ?? 'untyped';
-
             const metricName = metric.metric.__name__ || 'unknown_metric';
-            const valueParsed = parseFloat(metric.value[1]); // [timestamp, value]
+
+            // Prometheus instant vector: metric.value = [ts, val]
+            // Range vector (matrix): metric.values = [[ts, val], ...] – take last sample
+            let sampleValue: string | number | undefined = undefined;
+            if (Array.isArray(metric.value)) {
+              sampleValue = metric.value[1];
+            } else if (Array.isArray(metric.values) && metric.values.length > 0) {
+              const last = metric.values[metric.values.length - 1];
+              sampleValue = last?.[1];
+            }
+            const valueParsed = parseFloat(String(sampleValue));
             if (Number.isNaN(valueParsed)) {
               // Skip this metric if the value isn't a finite number
               continue;
@@ -782,6 +865,66 @@ export class MetricOperations {
       // For now, return empty lists to indicate failure but not crash the caller.
       return { nodesMetrics: [], podsMetrics: [], error: error.message };
     }
+  }
+
+  /**
+   * Build a compact, LLM-friendly cluster resource summary from normalized metrics
+   */
+  public buildLLMSummary(
+    nodes: NormalizedNodeMetric[] = [],
+    pods: NormalizedPodMetric[] = [],
+    topN: number = 5,
+  ): any {
+    const totalNodeCpu = nodes.reduce((acc, n) => acc + (n.usage.cpuCores || 0), 0);
+    const totalNodeMem = nodes.reduce((acc, n) => acc + (n.usage.memoryBytes || 0), 0);
+
+    const podsByCpu = [...pods]
+      .map((p) => ({
+        name: p.name,
+        namespace: p.namespace,
+        nodeName: p.nodeName,
+        cpuCores: p.usage.cpuCores || 0,
+        memoryBytes: p.usage.memoryBytes || 0,
+      }))
+      .sort((a, b) => b.cpuCores - a.cpuCores)
+      .slice(0, topN);
+
+    const podsByMem = [...pods]
+      .map((p) => ({
+        name: p.name,
+        namespace: p.namespace,
+        nodeName: p.nodeName,
+        cpuCores: p.usage.cpuCores || 0,
+        memoryBytes: p.usage.memoryBytes || 0,
+      }))
+      .sort((a, b) => b.memoryBytes - a.memoryBytes)
+      .slice(0, topN);
+
+    // Aggregate usage per namespace
+    const nsAgg: Record<string, { cpuCores: number; memoryBytes: number; podCount: number }> = {};
+    for (const p of pods) {
+      const key = p.namespace || 'unknown';
+      if (!nsAgg[key]) nsAgg[key] = { cpuCores: 0, memoryBytes: 0, podCount: 0 };
+      nsAgg[key].cpuCores += p.usage.cpuCores || 0;
+      nsAgg[key].memoryBytes += p.usage.memoryBytes || 0;
+      nsAgg[key].podCount += 1;
+    }
+    const namespaces = Object.entries(nsAgg)
+      .map(([ns, v]) => ({ namespace: ns, ...v }))
+      .sort((a, b) => b.cpuCores - a.cpuCores)
+      .slice(0, Math.min(topN, Object.keys(nsAgg).length));
+
+    return {
+      totals: {
+        nodeCpuCores: totalNodeCpu,
+        nodeMemoryBytes: totalNodeMem,
+        nodeCount: nodes.length,
+        podCount: pods.length,
+      },
+      topPodsByCpu: podsByCpu,
+      topPodsByMemory: podsByMem,
+      topNamespacesByCpu: namespaces,
+    };
   }
 
   /**
@@ -1026,16 +1169,32 @@ export class MetricOperations {
         }
       }
 
-      // If we got metrics, normalize and return them
+      // If we got metrics, normalize and return them (augmented with Prometheus if requested)
       if (
         (nodeMetricsRaw && nodeMetricsRaw.items && nodeMetricsRaw.items.length > 0) ||
         (podMetricsRaw && podMetricsRaw.items && podMetricsRaw.items.length > 0)
       ) {
         try {
+          // Optionally query Prometheus and merge custom metrics
+          const prometheusMetricsRaw: any[] = [];
+          if (Array.isArray(prometheusQueries) && prometheusQueries.length > 0) {
+            try {
+              await this.discoverPrometheusTargets(discoveryNamespace);
+              for (const q of prometheusQueries) {
+                const results = await this.getPrometheusMetrics(q);
+                if (Array.isArray(results)) prometheusMetricsRaw.push(...results);
+              }
+            } catch (e: any) {
+              const promErr = `Prometheus enrichment failed: ${e?.message || String(e)}`;
+              errors.push(promErr);
+              this.logger?.warn?.(promErr);
+            }
+          }
+
           const normalized = await this.normalizeAndMergeMetrics(
             nodeMetricsRaw,
             podMetricsRaw,
-            [],
+            prometheusMetricsRaw,
             allPodsRaw,
           );
 
