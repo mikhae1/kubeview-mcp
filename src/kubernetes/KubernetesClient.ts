@@ -65,6 +65,9 @@ export class KubernetesClient {
   private appsV1Api!: k8s.AppsV1Api;
   private batchV1Api!: k8s.BatchV1Api;
   private networkingV1Api!: k8s.NetworkingV1Api;
+  private autoscalingV2Api!: k8s.AutoscalingV2Api;
+  private policyV1Api!: k8s.PolicyV1Api;
+  private discoveryV1Api!: k8s.DiscoveryV1Api;
   private authMethod: AuthMethod;
   private logger?: Logger;
   private _resources: ResourceOperations;
@@ -220,6 +223,10 @@ export class KubernetesClient {
     this.appsV1Api = this.kc.makeApiClient(k8s.AppsV1Api);
     this.batchV1Api = this.kc.makeApiClient(k8s.BatchV1Api);
     this.networkingV1Api = this.kc.makeApiClient(k8s.NetworkingV1Api);
+    // Additional APIs for debugging tools
+    this.autoscalingV2Api = this.kc.makeApiClient(k8s.AutoscalingV2Api);
+    this.policyV1Api = this.kc.makeApiClient(k8s.PolicyV1Api);
+    this.discoveryV1Api = this.kc.makeApiClient(k8s.DiscoveryV1Api);
   }
 
   /**
@@ -395,6 +402,18 @@ export class KubernetesClient {
 
   public get kubeConfig(): k8s.KubeConfig {
     return this.kc;
+  }
+
+  public get autoscaling(): k8s.AutoscalingV2Api {
+    return this.autoscalingV2Api;
+  }
+
+  public get policy(): k8s.PolicyV1Api {
+    return this.policyV1Api;
+  }
+
+  public get discovery(): k8s.DiscoveryV1Api {
+    return this.discoveryV1Api;
   }
 
   /**

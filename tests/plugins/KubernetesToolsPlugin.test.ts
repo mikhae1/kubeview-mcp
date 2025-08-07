@@ -25,6 +25,18 @@ jest.mock('../../src/tools/kubernetes/index.js', () => {
     GetServicesTool: jest.fn().mockImplementation(() => createMockTool('get_services')),
     GetIngressTool: jest.fn().mockImplementation(() => createMockTool('get_ingresses')),
     GetDeploymentsTool: jest.fn().mockImplementation(() => createMockTool('get_deployments')),
+    GetNodesTool: jest.fn().mockImplementation(() => createMockTool('get_nodes')),
+    GetReplicaSetsTool: jest.fn().mockImplementation(() => createMockTool('get_replicasets')),
+    GetStatefulSetsTool: jest.fn().mockImplementation(() => createMockTool('get_statefulsets')),
+    GetDaemonSetsTool: jest.fn().mockImplementation(() => createMockTool('get_daemonsets')),
+    GetJobsTool: jest.fn().mockImplementation(() => createMockTool('get_jobs')),
+    GetCronJobsTool: jest.fn().mockImplementation(() => createMockTool('get_cronjobs')),
+    GetHPATool: jest.fn().mockImplementation(() => createMockTool('get_hpa')),
+    GetPDBTool: jest.fn().mockImplementation(() => createMockTool('get_pdb')),
+    GetEndpointsTool: jest.fn().mockImplementation(() => createMockTool('get_endpoints')),
+    GetEndpointSlicesTool: jest.fn().mockImplementation(() => createMockTool('get_endpointslices')),
+    GetResourceQuotaTool: jest.fn().mockImplementation(() => createMockTool('get_resourcequotas')),
+    GetLimitRangesTool: jest.fn().mockImplementation(() => createMockTool('get_limitranges')),
     GetResourceTool: jest.fn().mockImplementation(() => createMockTool('get_resource')),
     GetContainerLogsTool: jest.fn().mockImplementation(() => createMockTool('pod_logs')),
     GetEventsTool: jest.fn().mockImplementation(() => createMockTool('get_events')),
@@ -146,7 +158,7 @@ describe('KubernetesToolsPlugin', () => {
       await plugin.initialize(mockServer);
 
       // Should register multiple tools
-      expect(mockServer.registerTool).toHaveBeenCalledTimes(14); // Based on the number of tools in the plugin
+      expect(mockServer.registerTool).toHaveBeenCalledTimes(26); // Updated count with new tools
 
       // Verify some specific tools are registered
       const toolNames = mockServer.registerTool.mock.calls.map((call) => call[0].name);
