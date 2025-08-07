@@ -7,6 +7,13 @@ import {
 import { KubernetesError, NetworkError, TimeoutError } from '../../src/kubernetes/ErrorHandling';
 
 describe('RetryStrategy', () => {
+  beforeAll(() => {
+    // Make retries instantaneous to speed up tests
+    jest
+      .spyOn(RetryStrategy.prototype as any, 'delay')
+      .mockImplementation((..._args: unknown[]) => Promise.resolve());
+  });
+
   describe('Basic Retry Operations', () => {
     it('should succeed on first attempt', async () => {
       const strategy = new RetryStrategy({ maxAttempts: 3 });

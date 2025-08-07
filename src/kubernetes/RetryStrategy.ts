@@ -265,6 +265,13 @@ export class RetryStrategy {
    * Delay execution for specified milliseconds
    */
   private delay(ms: number): Promise<void> {
+    // In test environments, skip real delays to keep tests fast
+    if (
+      typeof process !== 'undefined' &&
+      (process.env.JEST_WORKER_ID || process.env.NODE_ENV === 'test')
+    ) {
+      return Promise.resolve();
+    }
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
