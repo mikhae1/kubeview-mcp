@@ -228,10 +228,23 @@ export class MetricOperations {
     const allPodMetrics: PodMetrics[] = [];
     for (const nodeName of nodeNames) {
       try {
-        // Use the Kubernetes API proxy to access the kubelet summary endpoint
-        const summary = await this.k8sClient.getRaw<any>(
-          `/api/v1/nodes/${nodeName}/proxy/stats/summary`,
-        );
+        // Prefer CoreV1Api connect proxy which fully integrates auth
+        let summary: any | null = null;
+        try {
+          const proxyResp: any = await (this.k8sClient.core as any).connectGetNodeProxyWithPath(
+            nodeName,
+            'stats/summary',
+          );
+          const body = proxyResp?.body ?? proxyResp;
+          if (body) {
+            summary = typeof body === 'string' ? JSON.parse(body) : body;
+          }
+        } catch {
+          // Fallback to raw request if connect API is unavailable or fails
+          summary = await this.k8sClient.getRaw<any>(
+            `/api/v1/nodes/${nodeName}/proxy/stats/summary`,
+          );
+        }
         if (summary && summary.pods) {
           for (const pod of summary.pods) {
             if (!namespace || pod.podRef.namespace === namespace) {
@@ -1055,8 +1068,14 @@ export class MetricOperations {
       }
     } catch (error: any) {
       this.logger?.warn(`Error fetching node metrics from metrics.k8s.io API: ${error.message}`);
+    }
 
-      // Try direct API endpoint access for Rancher Desktop and similar environments
+    // If no node metrics yet, try direct API endpoint access for environments where the aggregator
+    // path works better (e.g., Rancher Desktop, some managed clusters)
+    if (
+      !nodeMetricsRaw ||
+      (Array.isArray(nodeMetricsRaw.items) && nodeMetricsRaw.items.length === 0)
+    ) {
       try {
         this.logger?.debug?.('Attempting direct API endpoint access for node metrics...');
         const directMetrics = await this.k8sClient.getRaw<any>(
@@ -1086,8 +1105,14 @@ export class MetricOperations {
       }
     } catch (error: any) {
       this.logger?.warn(`Error fetching pod metrics from metrics.k8s.io API: ${error.message}`);
+    }
 
-      // Try direct API endpoint access for Rancher Desktop and similar environments
+    // If no pod metrics yet, try direct API endpoint access for environments where the aggregator
+    // path works better
+    if (
+      !podMetricsRaw ||
+      (Array.isArray(podMetricsRaw.items) && podMetricsRaw.items.length === 0)
+    ) {
       try {
         this.logger?.debug?.('Attempting direct API endpoint access for pod metrics...');
         const apiPath = discoveryNamespace
@@ -1134,6 +1159,16 @@ export class MetricOperations {
     /* -----------------------------------------------------------
      * 3) Kubelet /stats/summary (final fallback)
      * -------------------------------------------------------- */
+    const disableKubelet =
+      process.env.KUBE_METRICS_DISABLE_KUBELET === 'true' ||
+      process.env.KUBE_METRICS_DISABLE_KUBELET === '1';
+    if (disableKubelet) {
+      this.logger?.warn(
+        'Kubelet summary fallback disabled via KUBE_METRICS_DISABLE_KUBELET. Returning empty lists.',
+      );
+      return this.normalizeAndMergeMetrics(null, null, [], allPodsRaw);
+    }
+
     const kubeletPodMetrics = await this.getPodMetricsFromKubeletSummary(discoveryNamespace);
     const podMetricsList: PodMetricsList | null =
       kubeletPodMetrics && kubeletPodMetrics.length > 0

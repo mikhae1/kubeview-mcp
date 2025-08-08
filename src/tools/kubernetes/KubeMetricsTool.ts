@@ -51,13 +51,29 @@ export class KubeMetricsTool implements BaseTool {
   };
 
   async execute(params: any, client: KubernetesClient): Promise<any> {
-    const {
-      scope = 'pods',
-      namespace,
-      podName,
-      prometheusQueries = [],
-      fetchPodSpecs = true,
-    } = params || {};
+    const { scope = 'pods', namespace, podName, fetchPodSpecs = true } = params || {};
+
+    // Provide sensible default Prometheus queries if none were supplied
+    // to allow metrics without Metrics Server or kubelet access.
+    let prometheusQueries: string[] = Array.isArray(params?.prometheusQueries)
+      ? (params.prometheusQueries as string[])
+      : [];
+    if (!prometheusQueries || prometheusQueries.length === 0) {
+      if (scope === 'nodes') {
+        prometheusQueries = [
+          // CPU: non-idle CPU seconds rate per node
+          'sum by (node) (rate(node_cpu_seconds_total{mode!="idle"}[5m]))',
+          // Memory: available bytes per node (attach as custom metric)
+          'node_memory_MemAvailable_bytes',
+        ];
+      } else {
+        // Pods scope (default): CPU and memory per pod
+        prometheusQueries = [
+          'sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{container!="",pod!=""}[5m]))',
+          'sum by (namespace,pod) (container_memory_working_set_bytes{container!="",pod!=""})',
+        ];
+      }
+    }
 
     const metrics = new MetricOperations(client);
 
