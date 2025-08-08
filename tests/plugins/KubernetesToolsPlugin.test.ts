@@ -50,6 +50,7 @@ jest.mock('../../src/tools/kubernetes/index.js', () => {
     GetPersistentVolumeClaimsTool: jest
       .fn()
       .mockImplementation(() => createMockTool('get_persistent_volume_claims')),
+    PortForwardTool: jest.fn().mockImplementation(() => createMockTool('port_forward')),
   };
 });
 
@@ -158,7 +159,7 @@ describe('KubernetesToolsPlugin', () => {
       await plugin.initialize(mockServer);
 
       // Should register multiple tools
-      expect(mockServer.registerTool).toHaveBeenCalledTimes(26); // Updated count with new tools
+      expect(mockServer.registerTool).toHaveBeenCalledTimes(27); // Updated count with new tools
 
       // Verify some specific tools are registered
       const toolNames = mockServer.registerTool.mock.calls.map((call) => call[0].name);
