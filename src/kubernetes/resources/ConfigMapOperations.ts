@@ -6,6 +6,7 @@ import {
   WatchEventType,
 } from '../BaseResourceOperations.js';
 import { KubernetesClient } from '../KubernetesClient.js';
+import { isSensitiveMaskEnabled } from '../../utils/SensitiveData.js';
 
 /**
  * ConfigMap operations implementation - Read-only operations
@@ -208,8 +209,8 @@ export class ConfigMapOperations extends BaseResourceOperations<k8s.V1ConfigMap>
         namespace,
       });
 
-      // Apply sanitization if requested
-      if (!options?.skipSanitize) {
+      // Apply sanitization if requested or globally enforced
+      if (!options?.skipSanitize || isSensitiveMaskEnabled()) {
         response = this.sanitizeConfigMapData(response);
       }
 
@@ -259,8 +260,8 @@ export class ConfigMapOperations extends BaseResourceOperations<k8s.V1ConfigMap>
         });
       }
 
-      // Sanitize sensitive data if requested
-      if (!options?.skipSanitize) {
+      // Sanitize sensitive data if requested or globally enforced
+      if (!options?.skipSanitize || isSensitiveMaskEnabled()) {
         response.items = response.items.map((item) => this.sanitizeConfigMapData(item));
       }
 

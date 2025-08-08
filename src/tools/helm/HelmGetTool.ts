@@ -1,5 +1,6 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { HelmBaseTool, HelmCommonSchemas, executeHelmCommand } from './BaseTool.js';
+import { isSensitiveMaskEnabled, maskTextForSensitiveValues } from '../../utils/SensitiveData.js';
 
 /**
  * Helm "get" tool covering values, manifest, notes, hooks, and resources.
@@ -65,7 +66,15 @@ export class HelmGetTool implements HelmBaseTool {
         if (revision) args.push('--revision', String(revision));
         if (outputFormat) args.push('--output', outputFormat);
         if (allValues) args.push('--all');
-        return executeHelmCommand(args);
+        {
+          const res = await executeHelmCommand(args);
+          if (!isSensitiveMaskEnabled()) return res;
+          const out = res?.output ?? res;
+          if (typeof out === 'string') {
+            return { output: maskTextForSensitiveValues(out) };
+          }
+          return res;
+        }
       case 'manifest':
         args.push('manifest', releaseName);
         if (namespace) args.push('--namespace', namespace);

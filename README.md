@@ -35,6 +35,7 @@
   - [Argo Integration](#argo-integration)
   - [ArgoCD Integration](#argocd-integration)
   - [💡 Usage Examples](#-usage-examples)
+  - [🔒 Sensitive Data Masking](#-sensitive-data-masking)
   - [🤝 Contributing](#-contributing)
   - [📄 License](#-license)
   - [🙏 Acknowledgments](#-acknowledgments)
@@ -179,7 +180,7 @@ KubeView MCP is configured primarily via environment variables provided by your 
     ```
 
 - **LOG_LEVEL**: Controls logging verbosity for the server and plugins. If unset, defaults to `info` for the server and disables extra plugin logging.
-  - Valid values: `error`, `warn`, `info`, `verbose`, `debug`, `silly`
+  - Valid values: `error`, `warn`, `info`, `debug`.
   - When set to `debug`, extra diagnostic output is emitted by certain CLI wrappers.
   - The server writes logs to stderr/console and to `kubeview-mcp.log` in the working directory.
 
@@ -296,6 +297,23 @@ KubeView MCP will execute `get_resource` under the hood and return a structured 
 > *“List all pods in the **default** namespace and show their CPU and memory usage.”*
 
 This will trigger the `get_pods` and `get_pod_metrics` tools, combining their output to provide a comprehensive view of your pods' resource consumption.
+
+---
+
+## 🔒 Sensitive Data Masking
+
+KubeView MCP supports a global masking mode to prevent accidental disclosure of secrets in outputs (enabled by default).
+
+- Enable global masking: set one of the following to true/1/yes/on
+  - `MCP_HIDE_SENSITIVE`
+  - `HIDE_SENSITIVE_DATA`
+  - `MASK_SENSITIVE_DATA`
+- Customize the mask text: `SENSITIVE_MASK` (default: `*** FILTERED ***`)
+
+Effects when masking is enabled:
+- ConfigMaps: Values are sanitized by pattern; enabling global masking ensures redaction even if a caller passes `skipSanitize=true`.
+- Secrets: When listing secrets, all `data`/`stringData` values are fully masked; when describing a single secret we only return key names (no values).
+- Helm values: `helm_get_values` and `helm_get` with `what=values` redact sensitive keys/tokens in the returned text.
 
 ---
 

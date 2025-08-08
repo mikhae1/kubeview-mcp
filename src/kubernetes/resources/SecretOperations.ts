@@ -6,6 +6,7 @@ import {
   WatchEventType,
 } from '../BaseResourceOperations.js';
 import { KubernetesClient } from '../KubernetesClient.js';
+import { getMaskString, isSensitiveMaskEnabled } from '../../utils/SensitiveData.js';
 
 /**
  * Secret types
@@ -116,17 +117,26 @@ export class SecretOperations extends BaseResourceOperations<k8s.V1Secret> {
         });
       }
 
-      // The skipSanitize parameter is accepted for API compatibility but doesn't affect output yet
-      if (!options?.skipSanitize) {
-        // For now, just sanitize the data field by removing the actual secret values
-        // to prevent accidental exposure of sensitive data
+      // Sanitize data field (mask entire values) unless explicitly skipped or global mask disabled
+      const shouldMask = isSensitiveMaskEnabled() || !options?.skipSanitize;
+      if (shouldMask) {
+        const mask = getMaskString();
         response.items = response.items.map((secret: k8s.V1Secret) => ({
           ...secret,
           data: secret.data
             ? Object.keys(secret.data).reduce((acc: { [key: string]: string }, key: string) => {
-                acc[key] = '*** FILTERED ***';
+                acc[key] = mask;
                 return acc;
               }, {})
+            : undefined,
+          stringData: secret.stringData
+            ? Object.keys(secret.stringData).reduce(
+                (acc: { [key: string]: string }, key: string) => {
+                  acc[key] = mask;
+                  return acc;
+                },
+                {},
+              )
             : undefined,
         }));
       }
@@ -276,7 +286,7 @@ export class SecretOperations extends BaseResourceOperations<k8s.V1Secret> {
     try {
       const secret = await this.get(name, options);
 
-      // Note: Secret data is base64 encoded, we'll return keys only for security
+      // Note: We return keys only; but if we include preview fields in the future, keep mask here
       return {
         resourceType: 'secret',
         metadata: this.formatResourceMetadata(secret),
