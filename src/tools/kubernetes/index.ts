@@ -27,3 +27,4 @@ export { GetEndpointSlicesTool } from './GetEndpointSlicesTool.js';
 export { GetResourceQuotaTool } from './GetResourceQuotaTool.js';
 export { GetLimitRangesTool } from './GetLimitRangesTool.js';
 export { PortForwardTool } from './PortForwardTool.js';
+export { ExecTool } from './ExecTool.js';
