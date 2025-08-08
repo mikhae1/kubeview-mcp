@@ -12,8 +12,9 @@ import { SecretOperations } from '../../kubernetes/resources/SecretOperations.js
  */
 export class GetResourceTool implements BaseTool {
   tool: Tool = {
-    name: 'get_resource',
-    description: 'Get detailed information about a specific Kubernetes resource',
+    name: 'kube_describe',
+    description:
+      'Describe a single Kubernetes resource by type and name (supports: [pod, service, deployment, configmap, secret]). Returns a concise, LLM-friendly structure with metadata, spec highlights, and status.',
     inputSchema: {
       type: 'object',
       properties: {

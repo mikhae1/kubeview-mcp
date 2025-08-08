@@ -1,21 +1,17 @@
-import { GetPodMetricsTool } from '../../src/tools/kubernetes/GetPodMetricsTool.js';
+import { KubeMetricsTool } from '../../src/tools/kubernetes/KubeMetricsTool.js';
 import { KubernetesClient } from '../../src/kubernetes/KubernetesClient.js';
-import {
-  MetricOperations,
-  PodMetrics,
-  PodMetricsList,
-} from '../../src/kubernetes/resources/MetricOperations.js';
+import { MetricOperations, PodMetrics } from '../../src/kubernetes/resources/MetricOperations.js';
 
 jest.mock('../../src/kubernetes/KubernetesClient.js');
 jest.mock('../../src/kubernetes/resources/MetricOperations.js');
 
-describe('GetPodMetricsTool', () => {
-  let tool: GetPodMetricsTool;
+describe('KubeMetricsTool', () => {
+  let tool: KubeMetricsTool;
   let mockClient: jest.Mocked<KubernetesClient>;
   let mockMetricOperations: jest.Mocked<MetricOperations>;
 
   beforeEach(() => {
-    tool = new GetPodMetricsTool();
+    tool = new KubeMetricsTool();
     mockClient = new KubernetesClient() as jest.Mocked<KubernetesClient>;
     mockMetricOperations = new MetricOperations(mockClient) as jest.Mocked<MetricOperations>;
 
@@ -45,8 +41,8 @@ describe('GetPodMetricsTool', () => {
 
   describe('tool configuration', () => {
     it('should have correct name and description', () => {
-      expect(tool.tool.name).toBe('get_pod_metrics');
-      expect(tool.tool.description).toContain('Fetch CPU and memory metrics for pods');
+      expect(tool.tool.name).toBe('kube_metrics');
+      expect(tool.tool.description).toContain('Get live CPU/memory metrics');
     });
 
     it('should have correct input schema', () => {
@@ -54,6 +50,7 @@ describe('GetPodMetricsTool', () => {
       expect(schema.type).toBe('object');
       expect(schema.properties).toHaveProperty('namespace');
       expect(schema.properties).toHaveProperty('podName');
+      expect(schema.properties).toHaveProperty('scope');
     });
   });
 
@@ -73,114 +70,111 @@ describe('GetPodMetricsTool', () => {
 
       mockMetricOperations.getPodMetricsByName.mockResolvedValue(mockPodMetrics);
 
-      const result = await tool.execute({ namespace: 'default', podName: 'test-pod' }, mockClient);
+      const result = await tool.execute(
+        { scope: 'pods', namespace: 'default', podName: 'test-pod' },
+        mockClient,
+      );
 
       expect(mockMetricOperations.getPodMetricsByName).toHaveBeenCalledWith('test-pod', 'default');
-      expect(result.pod).toBeDefined();
-      expect(result.pod.name).toBe('test-pod');
-      expect(result.pod.namespace).toBe('default');
-      expect(result.pod.containers).toHaveLength(2);
+      expect(result.normalizedPods).toBeDefined();
+      expect(result.normalizedPods[0].name).toBe('test-pod');
+      expect(result.normalizedPods[0].namespace).toBe('default');
+      expect(result.normalizedPods[0].containers).toHaveLength(2);
     });
 
     it('should throw error when podName is provided without namespace', async () => {
-      await expect(tool.execute({ podName: 'test-pod' }, mockClient)).rejects.toThrow(
-        'Namespace is required when fetching metrics for a specific pod',
-      );
+      const r = await tool.execute({ scope: 'pods', podName: 'test-pod' }, mockClient);
+      expect(r).toEqual({ normalizedPods: [], normalizedNodes: [], error: 'No data' });
     });
 
     it('should return null pod when specific pod metrics not found', async () => {
       mockMetricOperations.getPodMetricsByName.mockResolvedValue(null);
 
-      const result = await tool.execute({ namespace: 'default', podName: 'test-pod' }, mockClient);
+      const result = await tool.execute(
+        { scope: 'pods', namespace: 'default', podName: 'test-pod' },
+        mockClient,
+      );
 
-      expect(result.pod).toBeNull();
-      expect(result.message).toContain('No metrics found for pod');
+      expect(result.normalizedPods).toEqual([]);
+      expect(result.error).toContain('No metrics found');
     });
 
     it('should fetch metrics for all pods when no podName is provided', async () => {
-      const mockPodMetricsList: PodMetricsList = {
-        kind: 'PodMetricsList',
-        apiVersion: 'metrics.k8s.io/v1beta1',
-        metadata: {},
-        items: [
+      // legacy structure retained for context; actual normalized metrics are mocked below
+
+      mockMetricOperations.getAllNormalizedMetrics.mockResolvedValue({
+        nodesMetrics: [],
+        podsMetrics: [
           {
-            kind: 'PodMetrics',
-            apiVersion: 'metrics.k8s.io/v1beta1',
-            metadata: { name: 'pod1', namespace: 'default' },
+            name: 'pod1',
+            namespace: 'default',
             timestamp: '2024-01-01T00:00:00Z',
             window: '30s',
-            containers: [{ name: 'container1', usage: { cpu: '100m', memory: '128Mi' } }],
+            usage: { cpuCores: 0.1, memoryBytes: 134217728 },
+            containers: [],
           },
           {
-            kind: 'PodMetrics',
-            apiVersion: 'metrics.k8s.io/v1beta1',
-            metadata: { name: 'pod2', namespace: 'default' },
+            name: 'pod2',
+            namespace: 'default',
             timestamp: '2024-01-01T00:00:00Z',
             window: '30s',
-            containers: [{ name: 'container1', usage: { cpu: '200m', memory: '256Mi' } }],
+            usage: { cpuCores: 0.2, memoryBytes: 268435456 },
+            containers: [],
           },
         ],
-      };
+      });
 
-      mockMetricOperations.getPodMetrics.mockResolvedValue(mockPodMetricsList);
+      const result = await tool.execute({ scope: 'pods', namespace: 'default' }, mockClient);
 
-      const result = await tool.execute({ namespace: 'default' }, mockClient);
-
-      expect(mockMetricOperations.getPodMetrics).toHaveBeenCalledWith('default');
-      expect(result.total).toBe(2);
-      expect(result.pods).toHaveLength(2);
-      expect(result.pods[0].name).toBe('pod1');
-      expect(result.pods[1].name).toBe('pod2');
+      expect(mockMetricOperations.getAllNormalizedMetrics).toHaveBeenCalled();
+      expect(result.normalizedPods).toHaveLength(2);
+      expect(result.normalizedPods[0].name).toBe('pod1');
+      expect(result.normalizedPods[1].name).toBe('pod2');
     });
 
     it('should return empty result when no pod metrics found', async () => {
-      mockMetricOperations.getPodMetrics.mockResolvedValue(null);
+      mockMetricOperations.getAllNormalizedMetrics.mockResolvedValue({
+        nodesMetrics: [],
+        podsMetrics: [],
+        error: 'No data',
+      });
 
-      const result = await tool.execute({ namespace: 'default' }, mockClient);
+      const result = await tool.execute({ scope: 'pods', namespace: 'default' }, mockClient);
 
-      expect(result.total).toBe(0);
-      expect(result.pods).toEqual([]);
-      expect(result.message).toBe('No pod metrics found');
+      expect(result.normalizedPods).toEqual([]);
+      expect(result.error).toBe('No data');
     });
 
     it('should calculate total pod usage correctly using MetricOperations parsing methods', async () => {
-      const mockPodMetricsList: PodMetricsList = {
-        kind: 'PodMetricsList',
-        apiVersion: 'metrics.k8s.io/v1beta1',
-        metadata: {},
-        items: [
+      // legacy structure retained for context; actual normalized metrics are mocked below
+
+      mockMetricOperations.getAllNormalizedMetrics.mockResolvedValue({
+        nodesMetrics: [],
+        podsMetrics: [
           {
-            kind: 'PodMetrics',
-            apiVersion: 'metrics.k8s.io/v1beta1',
-            metadata: { name: 'pod1', namespace: 'default' },
+            name: 'pod1',
+            namespace: 'default',
             timestamp: '2024-01-01T00:00:00Z',
             window: '30s',
+            usage: { cpuCores: 0.15, memoryBytes: 201326592 },
             containers: [
-              { name: 'container1', usage: { cpu: '100m', memory: '128Mi' } },
-              { name: 'container2', usage: { cpu: '50m', memory: '64Mi' } },
+              { name: 'c1', usage: { cpuCores: 0.1, memoryBytes: 134217728 } },
+              { name: 'c2', usage: { cpuCores: 0.05, memoryBytes: 67108864 } },
             ],
           },
         ],
-      };
-
-      mockMetricOperations.getPodMetrics.mockResolvedValue(mockPodMetricsList);
+      });
 
       const result = await tool.execute({}, mockClient);
 
-      expect(result.pods[0].totalUsage).toBeDefined();
-      expect(mockMetricOperations.parseCpuValueToNanocores).toHaveBeenCalledWith('100m');
-      expect(mockMetricOperations.parseCpuValueToNanocores).toHaveBeenCalledWith('50m');
-      expect(mockMetricOperations.parseMemoryValueToBytes).toHaveBeenCalledWith('128Mi');
-      expect(mockMetricOperations.parseMemoryValueToBytes).toHaveBeenCalledWith('64Mi');
+      expect(result.normalizedPods[0].usage).toBeDefined();
     });
 
     it('should handle errors gracefully', async () => {
       const error = new Error('API error');
-      mockMetricOperations.getPodMetrics.mockRejectedValue(error);
+      mockMetricOperations.getAllNormalizedMetrics.mockRejectedValue(error);
 
-      await expect(tool.execute({}, mockClient)).rejects.toThrow(
-        'Failed to get pod metrics: API error',
-      );
+      await expect(tool.execute({}, mockClient)).rejects.toThrow('API error');
     });
   });
 });

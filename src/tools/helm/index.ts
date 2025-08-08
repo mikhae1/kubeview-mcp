@@ -1,11 +1,5 @@
 export type { HelmBaseTool } from './BaseTool.js';
 export { HelmCommonSchemas, executeHelmCommand, validateHelmCLI } from './BaseTool.js';
 export { HelmListTool } from './HelmListTool.js';
-export { HelmGetValuesTool } from './HelmGetValuesTool.js';
-export { HelmGetManifestTool } from './HelmGetManifestTool.js';
-export { HelmGetNotesTool } from './HelmGetNotesTool.js';
-export { HelmGetHooksTool } from './HelmGetHooksTool.js';
-export { HelmStatusTool } from './HelmStatusTool.js';
-export { HelmHistoryTool } from './HelmHistoryTool.js';
-export { HelmGetResourcesTool } from './HelmGetResourcesTool.js';
-export { HelmListWithResourcesTool } from './HelmListWithResourcesTool.js';
+export { HelmGetTool } from './HelmGetTool.js';
+export { HelmReleaseTool } from './HelmReleaseTool.js';

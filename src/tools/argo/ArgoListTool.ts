@@ -7,7 +7,8 @@ import { ArgoBaseTool, ArgoCommonSchemas, executeArgoCommand } from './BaseTool.
 export class ArgoListTool implements ArgoBaseTool {
   tool: Tool = {
     name: 'argo_list',
-    description: 'List Argo workflows in the cluster (similar to `argo list`)',
+    description:
+      'List Argo Workflows (similar to `argo list`). Supports filters: namespace/all-namespaces, selector, status (running|succeeded|failed|pending|completed), since, and limits.',
     inputSchema: {
       type: 'object',
       properties: {

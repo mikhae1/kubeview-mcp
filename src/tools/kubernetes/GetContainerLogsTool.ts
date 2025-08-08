@@ -7,9 +7,9 @@ import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
  */
 export class GetContainerLogsTool implements BaseTool {
   tool: Tool = {
-    name: 'pod_logs',
+    name: 'kube_logs',
     description:
-      'Return stdout / stderr logs for a specified container in a pod in the current cluster (similar to `kubectl logs`)',
+      'Fetch stdout/stderr logs from a pod container (similar to `kubectl logs`). Supports container selection, tail, timestamps, previous instance, and since-duration.',
     inputSchema: {
       type: 'object',
       properties: {

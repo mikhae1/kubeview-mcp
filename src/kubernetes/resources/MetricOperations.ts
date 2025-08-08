@@ -141,7 +141,9 @@ export class MetricOperations {
         version: MetricOperations.METRICS_API_VERSION,
         plural: 'nodes',
       });
-      return response.body as NodeMetricsList;
+      // The k8s client returns { response, body }
+
+      return (response as any).body as NodeMetricsList;
     } catch (error: any) {
       this.logger?.error('Error fetching node metrics:', error.message);
       if (error.body) {
@@ -165,7 +167,8 @@ export class MetricOperations {
         plural: 'nodes',
         name: nodeName,
       });
-      return response.body as NodeMetrics;
+
+      return (response as any).body as NodeMetrics;
     } catch (error: any) {
       this.logger?.error(`Error fetching metrics for node ${nodeName}:`, error.message);
       if (error.body) {
@@ -269,7 +272,8 @@ export class MetricOperations {
           plural: 'pods',
         });
       }
-      return response.body as PodMetricsList;
+
+      return (response as any).body as PodMetricsList;
     } catch (error: any) {
       this.logger?.error('Error fetching pod metrics from metrics.k8s.io:', error.message);
       if (error.body) {
@@ -320,6 +324,27 @@ export class MetricOperations {
     this.logger?.debug?.(`Fetching metrics for pod: ${podName} in namespace ${namespace}`);
 
     try {
+      // 0) Try direct metrics.k8s.io GET for the specific pod (fast path)
+      try {
+        const direct = (await this.k8sClient.customObjects.getNamespacedCustomObject({
+          group: 'metrics.k8s.io',
+          version: 'v1beta1',
+          namespace,
+          plural: 'pods',
+          name: podName,
+        })) as any;
+        const body = direct?.body ?? direct;
+        if (body && body.kind === 'PodMetrics' && body.metadata?.name === podName) {
+          this.logger?.debug?.(`Direct metrics.k8s.io GET succeeded for ${namespace}/${podName}`);
+          return body as PodMetrics;
+        }
+      } catch (e: any) {
+        // Not fatal; continue with fallback strategies
+        this.logger?.debug?.(
+          `Direct metrics.k8s.io GET failed for ${namespace}/${podName}: ${e?.message || e}`,
+        );
+      }
+
       // Use the robust getPodMetrics method which handles all fallbacks
       const podMetricsList = await this.getPodMetrics(namespace);
 
@@ -346,6 +371,34 @@ export class MetricOperations {
         }
       } else {
         this.logger?.debug?.(`No pod metrics available in namespace ${namespace}`);
+      }
+
+      // 2) Final targeted fallback: use kubelet summary for the specific node hosting this pod
+      try {
+        const podResp: any = await this.k8sClient.core.readNamespacedPod({
+          name: podName,
+          namespace,
+        });
+        const nodeName: string | undefined = podResp?.spec?.nodeName;
+        if (nodeName) {
+          const summary = await this.k8sClient.getRaw<any>(
+            `/api/v1/nodes/${nodeName}/proxy/stats/summary`,
+          );
+          const pods: any[] = summary?.pods || [];
+          const target = pods.find(
+            (p) => p?.podRef?.name === podName && p?.podRef?.namespace === namespace,
+          );
+          if (target) {
+            this.logger?.debug?.(
+              `Found ${namespace}/${podName} metrics via kubelet summary on node ${nodeName}`,
+            );
+            return this.convertSummaryPodToPodMetrics(target);
+          }
+        }
+      } catch (e: any) {
+        this.logger?.warn?.(
+          `Kubelet summary targeted fetch failed for ${namespace}/${podName}: ${e?.message || e}`,
+        );
       }
     } catch (error: any) {
       this.logger?.error(

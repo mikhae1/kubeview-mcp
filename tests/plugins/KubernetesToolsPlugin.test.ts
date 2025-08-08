@@ -17,39 +17,13 @@ const createMockTool = (name: string) => ({
   execute: jest.fn().mockResolvedValue({ result: 'mock result' }),
 });
 
-// Mock the tools module
+// Mock the tools module (consolidated)
 jest.mock('../../src/tools/kubernetes/index.js', () => {
   return {
-    GetPodsTool: jest.fn().mockImplementation(() => createMockTool('get_pods')),
-    GetPodMetricsTool: jest.fn().mockImplementation(() => createMockTool('get_pod_metrics')),
-    GetServicesTool: jest.fn().mockImplementation(() => createMockTool('get_services')),
-    GetIngressTool: jest.fn().mockImplementation(() => createMockTool('get_ingresses')),
-    GetDeploymentsTool: jest.fn().mockImplementation(() => createMockTool('get_deployments')),
-    GetNodesTool: jest.fn().mockImplementation(() => createMockTool('get_nodes')),
-    GetReplicaSetsTool: jest.fn().mockImplementation(() => createMockTool('get_replicasets')),
-    GetStatefulSetsTool: jest.fn().mockImplementation(() => createMockTool('get_statefulsets')),
-    GetDaemonSetsTool: jest.fn().mockImplementation(() => createMockTool('get_daemonsets')),
-    GetJobsTool: jest.fn().mockImplementation(() => createMockTool('get_jobs')),
-    GetCronJobsTool: jest.fn().mockImplementation(() => createMockTool('get_cronjobs')),
-    GetHPATool: jest.fn().mockImplementation(() => createMockTool('get_hpa')),
-    GetPDBTool: jest.fn().mockImplementation(() => createMockTool('get_pdb')),
-    GetEndpointsTool: jest.fn().mockImplementation(() => createMockTool('get_endpoints')),
-    GetEndpointSlicesTool: jest.fn().mockImplementation(() => createMockTool('get_endpointslices')),
-    GetResourceQuotaTool: jest.fn().mockImplementation(() => createMockTool('get_resourcequotas')),
-    GetLimitRangesTool: jest.fn().mockImplementation(() => createMockTool('get_limitranges')),
-    GetResourceTool: jest.fn().mockImplementation(() => createMockTool('get_resource')),
-    GetContainerLogsTool: jest.fn().mockImplementation(() => createMockTool('pod_logs')),
-    GetEventsTool: jest.fn().mockImplementation(() => createMockTool('get_events')),
-    GetNamespacesTool: jest.fn().mockImplementation(() => createMockTool('get_namespaces')),
-    GetMetricsTool: jest.fn().mockImplementation(() => createMockTool('get_metrics')),
-    GetConfigMapTool: jest.fn().mockImplementation(() => createMockTool('get_configmaps')),
-    GetSecretsTool: jest.fn().mockImplementation(() => createMockTool('get_secrets')),
-    GetPersistentVolumesTool: jest
-      .fn()
-      .mockImplementation(() => createMockTool('get_persistent_volumes')),
-    GetPersistentVolumeClaimsTool: jest
-      .fn()
-      .mockImplementation(() => createMockTool('get_persistent_volume_claims')),
+    KubeListTool: jest.fn().mockImplementation(() => createMockTool('kube_get')),
+    KubeMetricsTool: jest.fn().mockImplementation(() => createMockTool('kube_metrics')),
+    GetResourceTool: jest.fn().mockImplementation(() => createMockTool('kube_describe')),
+    GetContainerLogsTool: jest.fn().mockImplementation(() => createMockTool('kube_logs')),
     PortForwardTool: jest.fn().mockImplementation(() => createMockTool('port_forward')),
     ExecTool: jest.fn().mockImplementation(() => createMockTool('exec')),
   };
@@ -99,14 +73,14 @@ describe('KubernetesToolsPlugin', () => {
     it('should refresh context when creating new client for MCP tool execution', async () => {
       await plugin.initialize(mockServer);
 
-      // Get the registered tool handler for get_pods
+      // Get the registered tool handler for kube_get
       const registerToolCalls = mockServer.registerTool.mock.calls;
-      const getPodsCall = registerToolCalls.find((call) => call[0].name === 'get_pods');
+      const kubeListCall = registerToolCalls.find((call) => call[0].name === 'kube_get');
 
-      expect(getPodsCall).toBeDefined();
+      expect(kubeListCall).toBeDefined();
 
       // Execute the tool handler
-      const toolHandler = getPodsCall![1];
+      const toolHandler = kubeListCall![1];
       await toolHandler({});
 
       // Verify that refreshCurrentContext was called
@@ -117,7 +91,7 @@ describe('KubernetesToolsPlugin', () => {
     it('should refresh context when executing tool via getToolFunction', async () => {
       await plugin.initialize(mockServer);
 
-      const toolFunction = plugin.getToolFunction('get_pods');
+      const toolFunction = plugin.getToolFunction('kube_get');
       expect(toolFunction).toBeDefined();
 
       // Execute the tool function
@@ -129,7 +103,7 @@ describe('KubernetesToolsPlugin', () => {
     });
 
     it('should refresh context when executing command via static executeCommand', async () => {
-      await KubernetesToolsPlugin.executeCommand('get_pods', {});
+      await KubernetesToolsPlugin.executeCommand('kube_get', {});
 
       // Verify that refreshCurrentContext was called
       expect(mockClient.refreshCurrentContext).toHaveBeenCalled();
@@ -144,8 +118,8 @@ describe('KubernetesToolsPlugin', () => {
       await plugin.initialize(mockServer);
 
       const registerToolCalls = mockServer.registerTool.mock.calls;
-      const getPodsCall = registerToolCalls.find((call) => call[0].name === 'get_pods');
-      const toolHandler = getPodsCall![1];
+      const kubeListCall = registerToolCalls.find((call) => call[0].name === 'kube_get');
+      const toolHandler = kubeListCall![1];
 
       // Should throw because refreshCurrentContext fails
       await expect(toolHandler({})).rejects.toThrow('Refresh failed');
@@ -156,19 +130,19 @@ describe('KubernetesToolsPlugin', () => {
   });
 
   describe('Plugin Initialization', () => {
-    it('should initialize and register all tools', async () => {
+    it('should initialize and register all consolidated tools', async () => {
       await plugin.initialize(mockServer);
 
-      // Should register multiple tools
-      expect(mockServer.registerTool).toHaveBeenCalledTimes(28); // Updated count with exec tool
+      // Should register fewer consolidated tools
+      expect(mockServer.registerTool).toHaveBeenCalledTimes(6);
 
       // Verify some specific tools are registered
       const toolNames = mockServer.registerTool.mock.calls.map((call) => call[0].name);
-      expect(toolNames).toContain('get_pods');
-      expect(toolNames).toContain('get_services');
-      expect(toolNames).toContain('get_ingresses');
-      expect(toolNames).toContain('get_deployments');
-      expect(toolNames).toContain('get_metrics');
+      expect(toolNames).toContain('kube_get');
+      expect(toolNames).toContain('kube_metrics');
+      expect(toolNames).toContain('kube_describe');
+      expect(toolNames).toContain('port_forward');
+      expect(toolNames).toContain('exec');
     });
 
     it('should handle initialization errors', async () => {
@@ -196,8 +170,8 @@ describe('KubernetesToolsPlugin', () => {
       await plugin.initialize(mockServer);
 
       const registerToolCalls = mockServer.registerTool.mock.calls;
-      const getPodsCall = registerToolCalls.find((call) => call[0].name === 'get_pods');
-      const toolHandler = getPodsCall![1];
+      const kubeListCall = registerToolCalls.find((call) => call[0].name === 'kube_get');
+      const toolHandler = kubeListCall![1];
 
       await expect(toolHandler({})).rejects.toThrow('Client creation failed');
     });

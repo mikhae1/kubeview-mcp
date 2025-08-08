@@ -5,7 +5,9 @@ import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { ResourceOperations } from './ResourceOperations.js';
 import type { ApiType, Configuration } from '@kubernetes/client-node';
-// import { URL } from 'url';
+import { URL } from 'url';
+import * as http from 'http';
+import * as https from 'https';
 
 /**
  * Configuration options for KubernetesClient
@@ -447,47 +449,151 @@ export class KubernetesClient {
     this.logger?.debug(`Making authenticated raw request to: ${path}`);
 
     try {
-      // Use the customObjects API as a workaround for raw requests
-      // Since metrics are served by the metrics-server through custom resources
+      // Fast path: metrics.k8s.io via CustomObjects API (avoids manual HTTP plumbing)
       if (path.includes('metrics.k8s.io')) {
         const group = 'metrics.k8s.io';
         const version = 'v1beta1';
 
         if (path.includes('/nodes')) {
-          return (await this.customObjects.listClusterCustomObject({
-            group: group,
-            version: version,
+          const resp = (await this.customObjects.listClusterCustomObject({
+            group,
+            version,
             plural: 'nodes',
-          })) as T;
-        } else if (path.includes('/pods')) {
-          // Handle namespaced vs cluster-wide pod metrics
+          })) as any;
+          return (resp?.body ?? resp) as T;
+        }
+
+        if (path.includes('/pods')) {
           const namespacedMatch = path.match(/\/namespaces\/([\w-]+)\/pods/);
           if (namespacedMatch) {
             const namespace = namespacedMatch[1];
-            return (await this.customObjects.listNamespacedCustomObject({
-              group: group,
-              version: version,
-              namespace: namespace,
+            const resp = (await this.customObjects.listNamespacedCustomObject({
+              group,
+              version,
+              namespace,
               plural: 'pods',
-            })) as T;
-          } else {
-            return (await this.customObjects.listClusterCustomObject({
-              group: group,
-              version: version,
-              plural: 'pods',
-            })) as T;
+            })) as any;
+            return (resp?.body ?? resp) as T;
+          }
+          const resp = (await this.customObjects.listClusterCustomObject({
+            group,
+            version,
+            plural: 'pods',
+          })) as any;
+          return (resp?.body ?? resp) as T;
+        }
+      }
+
+      // Generic Kubernetes API raw GET support (e.g., /api/v1/nodes/{name}/proxy/stats/summary)
+      const cluster = this.getCurrentCluster();
+      if (!cluster || !cluster.server) {
+        throw new Error('No current cluster server configured');
+      }
+
+      const base = cluster.server.replace(/\/$/, '');
+      const fullUrl = `${base}${path.startsWith('/') ? path : `/${path}`}`;
+      const url = new URL(fullUrl);
+
+      // Prepare request options and let kubeconfig inject auth and TLS material
+      const reqOpts: any = {
+        method: 'GET',
+        headers: { Accept: 'application/json' as const },
+        // Node https options
+        hostname: url.hostname,
+        port: url.port ? parseInt(url.port, 10) : url.protocol === 'https:' ? 443 : 80,
+        path: `${url.pathname}${url.search}`,
+        protocol: url.protocol,
+      };
+
+      // Apply kubeconfig auth to headers/TLS if available (supports exec plugins)
+      try {
+        const maybeApply: any = this.kc as any;
+        if (maybeApply && typeof maybeApply.applyToRequest === 'function') {
+          const reqLike: any = { url: fullUrl, headers: { ...(reqOpts.headers || {}) } };
+          maybeApply.applyToRequest(reqLike);
+          // Merge headers set by applyToRequest
+          reqOpts.headers = { ...(reqOpts.headers || {}), ...(reqLike.headers || {}) };
+          // Also copy TLS fields if present
+          if (reqLike.ca) (reqOpts as any).ca = reqLike.ca;
+          if (reqLike.cert) (reqOpts as any).cert = reqLike.cert;
+          if (reqLike.key) (reqOpts as any).key = reqLike.key;
+        }
+      } catch (e) {
+        this.logger?.warn?.(
+          `applyToRequest integration failed for ${fullUrl}: ${e instanceof Error ? e.message : e}`,
+        );
+      }
+
+      // Apply simple auth based on current kubeconfig user (token) and cluster TLS options
+      const user = this.kc.getCurrentUser();
+      if (user && (user as any).token) {
+        reqOpts.headers = reqOpts.headers || {};
+        reqOpts.headers.Authorization = `Bearer ${(user as any).token}`;
+      }
+
+      // Honor skipTlsVerify when using HTTPS and attach CA/cert/key if provided
+      if (url.protocol === 'https:') {
+        const clusterAny: any = this.getCurrentCluster();
+        const skipTls = this.config.skipTlsVerify || clusterAny?.skipTLSVerify;
+        (reqOpts as any).rejectUnauthorized = !skipTls;
+
+        if (clusterAny?.caData) {
+          try {
+            (reqOpts as any).ca = Buffer.from(clusterAny.caData, 'base64');
+          } catch {
+            (reqOpts as any).ca = clusterAny.caData;
+          }
+        }
+        if ((user as any)?.certData) {
+          try {
+            (reqOpts as any).cert = Buffer.from((user as any).certData, 'base64');
+          } catch {
+            (reqOpts as any).cert = (user as any).certData;
+          }
+        }
+        if ((user as any)?.keyData) {
+          try {
+            (reqOpts as any).key = Buffer.from((user as any).keyData, 'base64');
+          } catch {
+            (reqOpts as any).key = (user as any).keyData;
           }
         }
       }
 
-      // For non-metrics paths, throw an error explaining the limitation
-      throw new Error(
-        `Raw requests are only supported for metrics.k8s.io API paths. Attempted path: ${path}`,
-      );
+      const client = url.protocol === 'https:' ? https : http;
+
+      return await new Promise<T>((resolve, reject) => {
+        const req = client.request(reqOpts, (res) => {
+          let raw = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk) => (raw += chunk));
+          res.on('end', () => {
+            const status = res.statusCode || 0;
+            if (status >= 200 && status < 300) {
+              try {
+                const parsed = raw ? JSON.parse(raw) : ({} as T);
+                resolve(parsed as T);
+              } catch (parseErr: any) {
+                this.logger?.error(
+                  `Failed to parse JSON from ${fullUrl}: ${parseErr?.message || parseErr}`,
+                );
+                // Return raw string if not JSON
+                resolve(raw as unknown as T);
+              }
+            } else {
+              this.logger?.error(
+                `Raw request to ${fullUrl} failed: ${status} ${res.statusMessage}. Body: ${raw?.slice(0, 1024)}`,
+              );
+              reject(new Error(`HTTP ${status} ${res.statusMessage}`));
+            }
+          });
+        });
+        req.on('error', (err) => reject(err));
+        req.end();
+      });
     } catch (error: any) {
       this.logger?.error(`Error making raw request to ${path}: ${error.message}`);
 
-      // If it's a 403 error, provide more helpful debugging information
       if (error.statusCode === 403 || (error.response && error.response.statusCode === 403)) {
         this.logger?.error(
           'Authentication failed - check that your kubeconfig is valid and you have the necessary permissions',
