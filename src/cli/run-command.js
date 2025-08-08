@@ -281,8 +281,8 @@ function showGeneralHelp() {
   console.log('  npm run command -- pod_logs --podName=nginx-pod --namespace=default --tailLines=100');
   console.log('  # Helm');
   console.log('  npm run command -- helm_list');
-  console.log('  npm run command -- helm_status --releaseName=my-release --namespace=default');
-  console.log('  npm run command -- helm_get_values --releaseName=my-release --namespace=default');
+  console.log('  npm run command -- helm_get --what=status --releaseName=my-release --namespace=default');
+  console.log('  npm run command -- helm_get --what=values --releaseName=my-release --namespace=default');
   console.log('  # Argo');
   console.log('  npm run command -- argo_list');
   console.log('  npm run command -- argo_logs --workflowName=my-workflow --namespace=argo');

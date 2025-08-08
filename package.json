@@ -24,7 +24,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx --watch src/cli/cli.ts",
-    "start": "node bin/kubeview-mcp.js",
+    "start": "tsc && node bin/kubeview-mcp.js",
     "setup": "node bin/setup.js",
     "test": "jest",
     "test:watch": "jest --watch",

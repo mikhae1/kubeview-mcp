@@ -9,7 +9,7 @@ import { Readable, Writable } from 'node:stream';
  */
 export class ExecTool implements BaseTool {
   tool: Tool = {
-    name: 'exec',
+    name: 'kube_exec',
     description:
       'Execute a command in a container of a pod via the Kubernetes API (no kubectl). Captures stdout/stderr and returns them when the command completes.',
     inputSchema: {

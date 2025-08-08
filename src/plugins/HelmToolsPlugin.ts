@@ -5,7 +5,6 @@ import {
   validateHelmCLI,
   HelmListTool,
   HelmGetTool,
-  HelmReleaseTool,
 } from '../tools/helm/index.js';
 import { BaseToolsPlugin } from './BaseToolsPlugin.js';
 
@@ -17,7 +16,7 @@ export class HelmToolsPlugin extends BaseToolsPlugin<HelmBaseTool> {
   version = '0.1.0';
 
   protected createToolInstances(): HelmBaseTool[] {
-    return [new HelmListTool(), new HelmGetTool(), new HelmReleaseTool()];
+    return [new HelmListTool(), new HelmGetTool()];
   }
 
   static getCommandNames(): string[] {

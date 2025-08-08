@@ -7,13 +7,16 @@ import { HelmBaseTool, HelmCommonSchemas, executeHelmCommand } from './BaseTool.
 export class HelmGetTool implements HelmBaseTool {
   tool: Tool = {
     name: 'helm_get',
-    description: 'Get Helm release data: values, manifest, notes, hooks, or parsed resources.',
+    description:
+      'Get Helm release data: values, manifest, notes, hooks, resources, status, or history.',
     inputSchema: {
       type: 'object',
       properties: {
         what: {
           type: 'string',
-          enum: ['values', 'manifest', 'notes', 'hooks', 'resources'],
+          enum: ['values', 'manifest', 'notes', 'hooks', 'resources', 'status', 'history'],
+          description:
+            'One of: values (release values), manifest (rendered YAML), notes (chart notes), hooks (hook manifests), resources (parsed resources; filter with resourceType), status (release status; supports showResources), history (revision history).',
         },
         releaseName: HelmCommonSchemas.releaseName,
         namespace: HelmCommonSchemas.namespace,
@@ -32,14 +35,27 @@ export class HelmGetTool implements HelmBaseTool {
           description: 'Filter resources by Kubernetes kind when what=resources',
           optional: true,
         },
+        showResources: {
+          type: 'boolean',
+          description: 'Show the resources this release created (only for what=status)',
+          optional: true,
+        },
       },
       required: ['what', 'releaseName'],
     },
   };
 
   async execute(params: any): Promise<any> {
-    const { what, releaseName, namespace, revision, outputFormat, allValues, resourceType } =
-      params || {};
+    const {
+      what,
+      releaseName,
+      namespace,
+      revision,
+      outputFormat,
+      allValues,
+      resourceType,
+      showResources,
+    } = params || {};
 
     const args = ['get'];
     switch (what) {
@@ -72,6 +88,19 @@ export class HelmGetTool implements HelmBaseTool {
         const result = await executeHelmCommand(args);
         const manifestText = result.output || result;
         return this.parseKubernetesManifest(manifestText, resourceType);
+      }
+      case 'status': {
+        const sArgs = ['status', releaseName];
+        if (namespace) sArgs.push('--namespace', namespace);
+        if (outputFormat) sArgs.push('--output', outputFormat);
+        if (showResources) sArgs.push('--show-resources');
+        return executeHelmCommand(sArgs);
+      }
+      case 'history': {
+        const hArgs = ['history', releaseName];
+        if (namespace) hArgs.push('--namespace', namespace);
+        if (outputFormat) hArgs.push('--output', outputFormat);
+        return executeHelmCommand(hArgs);
       }
       default:
         throw new Error(`Unsupported what: ${what}`);

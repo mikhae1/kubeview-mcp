@@ -24,8 +24,8 @@ jest.mock('../../src/tools/kubernetes/index.js', () => {
     KubeMetricsTool: jest.fn().mockImplementation(() => createMockTool('kube_metrics')),
     GetResourceTool: jest.fn().mockImplementation(() => createMockTool('kube_describe')),
     GetContainerLogsTool: jest.fn().mockImplementation(() => createMockTool('kube_logs')),
-    PortForwardTool: jest.fn().mockImplementation(() => createMockTool('port_forward')),
-    ExecTool: jest.fn().mockImplementation(() => createMockTool('exec')),
+    PortForwardTool: jest.fn().mockImplementation(() => createMockTool('kube_port')),
+    ExecTool: jest.fn().mockImplementation(() => createMockTool('kube_exec')),
   };
 });
 
@@ -141,8 +141,8 @@ describe('KubernetesToolsPlugin', () => {
       expect(toolNames).toContain('kube_get');
       expect(toolNames).toContain('kube_metrics');
       expect(toolNames).toContain('kube_describe');
-      expect(toolNames).toContain('port_forward');
-      expect(toolNames).toContain('exec');
+      expect(toolNames).toContain('kube_port');
+      expect(toolNames).toContain('kube_exec');
     });
 
     it('should handle initialization errors', async () => {

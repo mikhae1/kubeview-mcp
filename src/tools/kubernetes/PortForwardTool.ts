@@ -11,7 +11,7 @@ import { PassThrough } from 'node:stream';
  */
 export class PortForwardTool implements BaseTool {
   tool: Tool = {
-    name: 'port_forward',
+    name: 'kube_port',
     description: 'Temporary port-forward to a pod/service for local probing (runs with a timeout).',
     inputSchema: {
       type: 'object',
