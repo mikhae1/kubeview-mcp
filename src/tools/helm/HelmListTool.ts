@@ -7,7 +7,7 @@ import { HelmBaseTool, HelmCommonSchemas, executeHelmCommand } from './BaseTool.
 export class HelmListTool implements HelmBaseTool {
   tool: Tool = {
     name: 'helm_list',
-    description: 'List Helm releases in the cluster (similar to `helm list`)',
+    description: 'List Helm releases in the cluster.',
     inputSchema: {
       type: 'object',
       properties: {
