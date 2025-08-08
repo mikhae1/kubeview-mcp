@@ -14,18 +14,22 @@
   - [Table of Contents](#table-of-contents)
   - [✨ Features](#-features)
   - [🚀 Quick Start](#-quick-start)
+    - [Zero-install via npx](#zero-install-via-npx)
     - [Prerequisites](#prerequisites)
     - [Installation](#installation)
-    - [Build & Run](#build--run)
+    - [Build \& Run](#build--run)
   - [📟 CLI Reference](#-cli-reference)
-  - [⚙️ Configuration](#️-configuration)
     - [Resource Management](#resource-management)
-    - [Storage & Persistence](#storage--persistence)
-    - [Monitoring & Observability](#monitoring--observability)
+    - [Storage \& Persistence](#storage--persistence)
+    - [Monitoring \& Observability](#monitoring--observability)
     - [Generic Resource Tool](#generic-resource-tool)
+  - [⚙️ Configuration](#️-configuration)
+    - [Environment variables (implemented)](#environment-variables-implemented)
+    - [Kubernetes authentication modes](#kubernetes-authentication-modes)
+    - [Example: configuring via shell](#example-configuring-via-shell)
   - [🪄 Helm Integration](#-helm-integration)
     - [Core Operations](#core-operations)
-    - [Configuration & Values](#configuration--values)
+    - [Configuration \& Values](#configuration--values)
     - [Helm ↔ Kubernetes Bridge](#helm--kubernetes-bridge)
       - [Example – list all Helm releases](#example--list-all-helm-releases)
   - [Argo Integration](#argo-integration)
@@ -179,6 +183,7 @@ KubeView MCP is configured primarily via environment variables provided by your 
   - When set to `debug`, extra diagnostic output is emitted by certain CLI wrappers.
   - The server writes logs to stderr/console and to `kubeview-mcp.log` in the working directory.
 
+- **TIMEOUT**: Global timeout in milliseconds
 - **HELM_TIMEOUT**: Timeout in milliseconds for `helm` CLI invocations. Default: `30000`.
 - **ARGO_TIMEOUT**: Timeout in milliseconds for `argo` CLI invocations. Default: `30000`.
 - **ARGOCD_TIMEOUT**: Timeout in milliseconds for `argocd` CLI invocations. Default: `30000`.

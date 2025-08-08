@@ -144,7 +144,12 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
 
     const cmd = plugin.commandMap.get(commandName);
     if (!cmd) throw new Error(`Unknown tool: ${commandName}`);
-    return cmd.execute(params as any, client);
+    const execPromise = cmd.execute(params as any, client);
+    const timeoutMs = plugin.computeGlobalTimeoutMs(params);
+    // Use BaseToolsPlugin timeout helper
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore - accessing protected method from static context via instance
+    return plugin.withTimeout(execPromise, timeoutMs, cmd.tool?.name || commandName);
   }
 
   private async createOrReuseClient(): Promise<KubernetesClient> {
@@ -209,7 +214,9 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
       for (const command of this.commands) {
         server.registerTool(command.tool, async (params: unknown) => {
           const client = await this.createOrReuseClient();
-          return command.execute(params as any, client);
+          const execPromise = command.execute(params as any, client);
+          const timeoutMs = this.computeGlobalTimeoutMs(params);
+          return this.withTimeout(execPromise, timeoutMs, command.tool?.name);
         });
       }
 

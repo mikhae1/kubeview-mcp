@@ -1,6 +1,8 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { MCPPlugin, MCPServer } from '../server/MCPServer.js';
 
+const DEFAULT_TIMEOUT_MS = 30000;
+
 export interface ToolLike {
   tool: Tool;
 }
@@ -39,7 +41,12 @@ export abstract class BaseToolsPlugin<TTool extends ToolLike> implements MCPPlug
     if (!anyTool.execute) {
       throw new Error('Tool does not implement execute(params)');
     }
-    return async (params: any) => anyTool.execute!(params);
+    return async (params: any) => {
+      const timeoutMs = this.computeGlobalTimeoutMs(params);
+      const execPromise = anyTool.execute!(params);
+      const label = (_tool as unknown as ToolLike).tool?.name || 'tool';
+      return this.withTimeout(execPromise, timeoutMs, label);
+    };
   }
 
   /** Build the internal command map */
@@ -103,4 +110,40 @@ export abstract class BaseToolsPlugin<TTool extends ToolLike> implements MCPPlug
   }
 
   async shutdown(): Promise<void> {}
+
+  /** Determine the global timeout in ms from params or env (TIMEOUT) */
+  protected computeGlobalTimeoutMs(params: any): number | undefined {
+    const paramTimeout =
+      params && typeof params.timeoutMs === 'number' ? params.timeoutMs : undefined;
+    const envTimeout = process.env.TIMEOUT
+      ? parseInt(process.env.TIMEOUT, DEFAULT_TIMEOUT_MS)
+      : undefined;
+    const timeoutMs = paramTimeout ?? envTimeout;
+    return Number.isFinite(timeoutMs as number) && (timeoutMs as number) > 0
+      ? (timeoutMs as number)
+      : undefined;
+  }
+
+  /** Wrap a promise with a timeout if provided */
+  protected async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs?: number,
+    label?: string,
+  ): Promise<T> {
+    if (!timeoutMs) return promise;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`${label || 'operation'} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      promise
+        .then((value) => {
+          clearTimeout(timer);
+          resolve(value);
+        })
+        .catch((err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+    });
+  }
 }

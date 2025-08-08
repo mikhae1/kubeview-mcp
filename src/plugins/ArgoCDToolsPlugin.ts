@@ -75,7 +75,12 @@ export class ArgoCDToolsPlugin extends BaseToolsPlugin<ArgoCDBaseTool> {
     }
 
     try {
-      const result = await plugin.runCommandByName(commandName, params);
+      const timeoutMs = plugin.computeGlobalTimeoutMs(params);
+      const result = await plugin.withTimeout(
+        plugin.runCommandByName(commandName, params),
+        timeoutMs,
+        commandName,
+      );
       if (logger) {
         logger.debug(`Command ${commandName} completed successfully`);
       }
