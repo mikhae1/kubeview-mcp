@@ -42,7 +42,7 @@ describe('KubeMetricsTool', () => {
   describe('tool configuration', () => {
     it('should have correct name and description', () => {
       expect(tool.tool.name).toBe('kube_metrics');
-      expect(tool.tool.description).toContain('Get live CPU/memory metrics');
+      expect(tool.tool.description).toContain('One-shot cluster metrics and diagnostics');
     });
 
     it('should have correct input schema', () => {
@@ -102,7 +102,8 @@ describe('KubeMetricsTool', () => {
     it('should fetch metrics for all pods when no podName is provided', async () => {
       // legacy structure retained for context; actual normalized metrics are mocked below
 
-      mockMetricOperations.getAllNormalizedMetrics.mockResolvedValue({
+      // Use new API getMetricsWithOptions
+      mockMetricOperations.getMetricsWithOptions = jest.fn().mockResolvedValue({
         nodesMetrics: [],
         podsMetrics: [
           {
@@ -126,14 +127,14 @@ describe('KubeMetricsTool', () => {
 
       const result = await tool.execute({ scope: 'pods', namespace: 'default' }, mockClient);
 
-      expect(mockMetricOperations.getAllNormalizedMetrics).toHaveBeenCalled();
+      expect(mockMetricOperations.getMetricsWithOptions).toHaveBeenCalled();
       expect(result.normalizedPods).toHaveLength(2);
       expect(result.normalizedPods[0].name).toBe('pod1');
       expect(result.normalizedPods[1].name).toBe('pod2');
     });
 
     it('should return empty result when no pod metrics found', async () => {
-      mockMetricOperations.getAllNormalizedMetrics.mockResolvedValue({
+      mockMetricOperations.getMetricsWithOptions = jest.fn().mockResolvedValue({
         nodesMetrics: [],
         podsMetrics: [],
         error: 'No data',
@@ -148,7 +149,7 @@ describe('KubeMetricsTool', () => {
     it('should calculate total pod usage correctly using MetricOperations parsing methods', async () => {
       // legacy structure retained for context; actual normalized metrics are mocked below
 
-      mockMetricOperations.getAllNormalizedMetrics.mockResolvedValue({
+      mockMetricOperations.getMetricsWithOptions = jest.fn().mockResolvedValue({
         nodesMetrics: [],
         podsMetrics: [
           {
@@ -172,7 +173,7 @@ describe('KubeMetricsTool', () => {
 
     it('should handle errors gracefully', async () => {
       const error = new Error('API error');
-      mockMetricOperations.getAllNormalizedMetrics.mockRejectedValue(error);
+      mockMetricOperations.getMetricsWithOptions = jest.fn().mockRejectedValue(error);
 
       await expect(tool.execute({}, mockClient)).rejects.toThrow('API error');
     });

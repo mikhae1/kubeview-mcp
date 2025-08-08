@@ -255,6 +255,17 @@ export class KubernetesClient {
   }
 
   /**
+   * Get the current namespace from the active context, falling back to 'default' if undefined
+   */
+  public getCurrentNamespace(): string | undefined {
+    const currentContextName = this.kc.getCurrentContext();
+    const contexts = this.kc.getContexts();
+    const ctx = contexts.find((c) => c.name === currentContextName);
+    // Kubernetes defaults to 'default' namespace when not specified
+    return ctx?.namespace || 'default';
+  }
+
+  /**
    * Get all available contexts
    */
   public getContexts(): string[] {

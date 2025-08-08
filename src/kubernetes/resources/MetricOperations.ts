@@ -116,6 +116,17 @@ export interface NormalizedCustomMetric {
   type?: 'gauge' | 'counter' | 'histogram' | 'summary' | 'untyped'; // Optional: Prometheus metric type
 }
 
+export interface ProblemFinding {
+  severity: 'info' | 'warning' | 'critical';
+  kind: 'Cluster' | 'Node' | 'Pod' | 'Namespace';
+  name?: string;
+  namespace?: string;
+  nodeName?: string;
+  reason: string;
+  message: string;
+  recommendation?: string;
+}
+
 export class MetricOperations {
   private k8sClient: KubernetesClient;
   private logger?: Logger;
@@ -1187,6 +1198,323 @@ export class MetricOperations {
     }
 
     return this.normalizeAndMergeMetrics(null, podMetricsList, [], allPodsRaw);
+  }
+
+  /**
+   * Analyze normalized metrics and live cluster state to detect likely problems.
+   * Returns structured findings suitable for one-shot diagnostics.
+   */
+  public async detectProblems(
+    normalizedNodes: NormalizedNodeMetric[] = [],
+    normalizedPods: NormalizedPodMetric[] = [],
+    options?: {
+      namespace?: string;
+      cpuSaturationThreshold?: number; // e.g., 0.9 = 90% of allocatable
+      memorySaturationThreshold?: number; // e.g., 0.9 = 90% of allocatable
+      podRestartThreshold?: number; // restartCount threshold
+      podLimitPressureThreshold?: number; // e.g., 0.8 = 80% of limit
+      includeNodeFindings?: boolean; // if false, suppress node-level findings
+    },
+  ): Promise<{
+    findings: ProblemFinding[];
+    counts: Record<string, number>;
+    health: 'healthy' | 'degraded' | 'critical';
+  }> {
+    const nsFilter = options?.namespace;
+    const cpuSat = options?.cpuSaturationThreshold ?? 0.9;
+    const memSat = options?.memorySaturationThreshold ?? 0.9;
+    const restartThresh = options?.podRestartThreshold ?? 5;
+    const limitPress = options?.podLimitPressureThreshold ?? 0.8;
+
+    const findings: ProblemFinding[] = [];
+
+    // Helper formatters
+    const formatBytes = (bytes?: number) => {
+      if (bytes === undefined) return 'unknown';
+      const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+      let v = bytes;
+      let i = 0;
+      while (v >= 1024 && i < units.length - 1) {
+        v /= 1024;
+        i++;
+      }
+      return `${v.toFixed(1)} ${units[i]}`;
+    };
+    const formatCores = (cores?: number) =>
+      cores !== undefined ? `${cores.toFixed(2)} cores` : 'unknown';
+
+    // Fetch live cluster state needed for diagnostics
+    let nodeList: V1Node[] = [];
+    let allPods: V1Pod[] = [];
+    if (options?.includeNodeFindings !== false) {
+      try {
+        const nodesResp = await this.k8sClient.core.listNode();
+        nodeList = (nodesResp.items as V1Node[]) || [];
+      } catch (e) {
+        this.logger?.warn?.(`Failed to list nodes for diagnostics: ${e}`);
+      }
+    }
+    try {
+      if (nsFilter) {
+        const podsResp = await this.k8sClient.core.listNamespacedPod({ namespace: nsFilter });
+        allPods = (podsResp.items as V1Pod[]) || [];
+      } else {
+        const podsResp = await this.k8sClient.core.listPodForAllNamespaces();
+        allPods = (podsResp.items as V1Pod[]) || [];
+      }
+    } catch (e) {
+      this.logger?.warn?.(`Failed to list pods for diagnostics: ${e}`);
+    }
+
+    // Index helpers
+    const nodeByName = new Map<string, V1Node>();
+    for (const n of nodeList) {
+      if (n.metadata?.name) nodeByName.set(n.metadata.name, n);
+    }
+    const podSpecByKey = new Map<string, V1Pod>();
+    for (const p of allPods) {
+      const key = `${p.metadata?.namespace}:${p.metadata?.name}`;
+      podSpecByKey.set(key, p);
+    }
+
+    // 1) Node conditions and saturation
+    if (options?.includeNodeFindings !== false) {
+      for (const n of nodeList) {
+        const nodeName = n.metadata?.name || 'unknown';
+        const conditions = n.status?.conditions || [];
+        const ready = conditions.find((c) => c.type === 'Ready');
+        if (!ready || ready.status !== 'True') {
+          findings.push({
+            severity: 'critical',
+            kind: 'Node',
+            name: nodeName,
+            reason: 'NodeNotReady',
+            message: `Node ${nodeName} is not Ready`,
+            recommendation:
+              'Check kubelet, network connectivity, and node health. Describe node and inspect conditions/events.',
+          });
+        }
+        for (const pressure of ['MemoryPressure', 'DiskPressure', 'PIDPressure'] as const) {
+          const cond = conditions.find((c) => c.type === pressure);
+          if (cond && cond.status === 'True') {
+            findings.push({
+              severity: 'warning',
+              kind: 'Node',
+              name: nodeName,
+              reason: pressure,
+              message: `Node ${nodeName} reports ${pressure}`,
+              recommendation:
+                pressure === 'MemoryPressure'
+                  ? 'Reduce workload memory usage or scale out. Investigate large memory consumers.'
+                  : pressure === 'DiskPressure'
+                    ? 'Free disk space, clean image/cache, or expand disk.'
+                    : 'Reduce process count or tune PID limits.',
+            });
+          }
+        }
+
+        // Utilization against allocatable
+        const allocCpu = this.parseK8sCpuString(n.status?.allocatable?.cpu as unknown as string);
+        const allocMem = this.parseK8sMemoryString(
+          n.status?.allocatable?.memory as unknown as string,
+        );
+        const usage = normalizedNodes.find((nn) => nn.name === nodeName)?.usage;
+        if (usage && allocCpu && usage.cpuCores !== undefined) {
+          const pct = usage.cpuCores / allocCpu;
+          if (pct >= cpuSat) {
+            findings.push({
+              severity: 'warning',
+              kind: 'Node',
+              name: nodeName,
+              reason: 'HighCpuUtilization',
+              message: `CPU utilization ${(pct * 100) | 0}% on ${nodeName} (${formatCores(usage.cpuCores)} of ${formatCores(allocCpu)})`,
+              recommendation: 'Consider scaling out, pod anti-affinity, or resource quotas.',
+            });
+          }
+        }
+        if (usage && allocMem && usage.memoryBytes !== undefined) {
+          const pct = usage.memoryBytes / allocMem;
+          if (pct >= memSat) {
+            findings.push({
+              severity: 'warning',
+              kind: 'Node',
+              name: nodeName,
+              reason: 'HighMemoryUtilization',
+              message: `Memory utilization ${(pct * 100) | 0}% on ${nodeName} (${formatBytes(usage.memoryBytes)} of ${formatBytes(allocMem)})`,
+              recommendation: 'Right-size memory requests/limits or scale nodes.',
+            });
+          }
+        }
+      }
+    }
+
+    // 2) Pod states, restarts, OOMKilled, CrashLoopBackOff, Pending
+    for (const p of allPods) {
+      if (nsFilter && p.metadata?.namespace !== nsFilter) continue;
+      const phase = p.status?.phase;
+      const podKey = `${p.metadata?.namespace}:${p.metadata?.name}`;
+      const nn = normalizedPods.find(
+        (pm) => pm.name === p.metadata?.name && pm.namespace === p.metadata?.namespace,
+      );
+
+      if (phase === 'Pending') {
+        findings.push({
+          severity: 'warning',
+          kind: 'Pod',
+          name: p.metadata?.name,
+          namespace: p.metadata?.namespace,
+          reason: 'Pending',
+          message: `Pod ${podKey} is Pending`,
+          recommendation:
+            'Check scheduling constraints, node selectors, taints/tolerations, and resource requests.',
+        });
+      }
+      const statuses = p.status?.containerStatuses || [];
+      for (const cs of statuses) {
+        const restarts = cs.restartCount || 0;
+        if (restarts >= restartThresh) {
+          findings.push({
+            severity: 'warning',
+            kind: 'Pod',
+            name: p.metadata?.name,
+            namespace: p.metadata?.namespace,
+            reason: 'HighRestarts',
+            message: `Container ${cs.name} in ${podKey} has restarted ${restarts} times`,
+            recommendation:
+              'Inspect container logs and liveness/readiness probes. Consider backoff limits.',
+          });
+        }
+        const waitingReason = cs.state?.waiting?.reason;
+        if (waitingReason === 'CrashLoopBackOff' || waitingReason === 'ImagePullBackOff') {
+          findings.push({
+            severity: 'critical',
+            kind: 'Pod',
+            name: p.metadata?.name,
+            namespace: p.metadata?.namespace,
+            reason: waitingReason,
+            message: `Container ${cs.name} in ${podKey} is ${waitingReason}`,
+            recommendation:
+              waitingReason === 'CrashLoopBackOff'
+                ? 'Check logs, startup command, and resource limits. Investigate recent changes.'
+                : 'Verify image name, tag, registry secrets, and network to registry.',
+          });
+        }
+        const lastTerm = cs.lastState?.terminated;
+        if (lastTerm?.reason === 'OOMKilled') {
+          findings.push({
+            severity: 'critical',
+            kind: 'Pod',
+            name: p.metadata?.name,
+            namespace: p.metadata?.namespace,
+            reason: 'OOMKilled',
+            message: `Container ${cs.name} in ${podKey} was OOMKilled`,
+            recommendation:
+              'Increase memory limit, reduce memory usage, or add memory requests to improve QoS.',
+          });
+        }
+      }
+
+      // Limits pressure: usage vs limits
+      const specContainers = p.spec?.containers || [];
+      let totalCpuLimit: number | undefined = 0;
+      let totalMemLimit: number | undefined = 0;
+      let hasAnyLimit = false;
+      for (const c of specContainers) {
+        const cpuL = this.parseK8sCpuString(c.resources?.limits?.cpu as unknown as string);
+        const memL = this.parseK8sMemoryString(c.resources?.limits?.memory as unknown as string);
+        if (cpuL !== undefined) {
+          hasAnyLimit = true;
+          totalCpuLimit = (totalCpuLimit ?? 0) + cpuL;
+        }
+        if (memL !== undefined) {
+          hasAnyLimit = true;
+          totalMemLimit = (totalMemLimit ?? 0) + memL;
+        }
+      }
+      if (!hasAnyLimit) {
+        // No limits defined at all
+        // Warn only if usage is non-trivial
+        const usageCpu = nn?.usage.cpuCores ?? 0;
+        const usageMem = nn?.usage.memoryBytes ?? 0;
+        if (usageCpu >= 0.5 || usageMem >= 512 * 1024 * 1024) {
+          findings.push({
+            severity: 'info',
+            kind: 'Pod',
+            name: p.metadata?.name,
+            namespace: p.metadata?.namespace,
+            reason: 'NoResourceLimits',
+            message: `Pod ${podKey} has no resource limits and uses ${formatCores(usageCpu)}, ${formatBytes(usageMem)}`,
+            recommendation:
+              'Define CPU/Memory limits to prevent noisy-neighbor issues and enable scheduling guarantees.',
+          });
+        }
+      } else if (nn) {
+        if (totalCpuLimit && nn.usage.cpuCores !== undefined) {
+          const cpuPct = nn.usage.cpuCores / totalCpuLimit;
+          if (cpuPct >= limitPress) {
+            findings.push({
+              severity: cpuPct >= 1 ? 'critical' : 'warning',
+              kind: 'Pod',
+              name: p.metadata?.name,
+              namespace: p.metadata?.namespace,
+              reason: 'CpuLimitPressure',
+              message: `Pod ${podKey} is at ${(cpuPct * 100).toFixed(0)}% of CPU limit (${formatCores(
+                nn.usage.cpuCores,
+              )} of ${formatCores(totalCpuLimit)})`,
+              recommendation: 'Increase CPU limit or optimize workload CPU usage.',
+            });
+          }
+        }
+        if (totalMemLimit && nn.usage.memoryBytes !== undefined) {
+          const memPct = nn.usage.memoryBytes / totalMemLimit;
+          if (memPct >= limitPress) {
+            findings.push({
+              severity: memPct >= 1 ? 'critical' : 'warning',
+              kind: 'Pod',
+              name: p.metadata?.name,
+              namespace: p.metadata?.namespace,
+              reason: 'MemoryLimitPressure',
+              message: `Pod ${podKey} is at ${(memPct * 100).toFixed(0)}% of memory limit (${formatBytes(
+                nn.usage.memoryBytes,
+              )} of ${formatBytes(totalMemLimit)})`,
+              recommendation: 'Increase memory limit or reduce application memory footprint.',
+            });
+          }
+        }
+      }
+    }
+
+    // 3) Namespace hotspots (top consumers)
+    const namespaceTotals = new Map<string, { cpu: number; mem: number; pods: number }>();
+    for (const pm of normalizedPods) {
+      const ns = pm.namespace || 'unknown';
+      const agg = namespaceTotals.get(ns) || { cpu: 0, mem: 0, pods: 0 };
+      agg.cpu += pm.usage.cpuCores || 0;
+      agg.mem += pm.usage.memoryBytes || 0;
+      agg.pods += 1;
+      namespaceTotals.set(ns, agg);
+    }
+    const totalCpu = Array.from(namespaceTotals.values()).reduce((a, b) => a + b.cpu, 0);
+    for (const [ns, agg] of namespaceTotals) {
+      if (totalCpu > 0 && agg.cpu / totalCpu >= 0.6) {
+        findings.push({
+          severity: 'info',
+          kind: 'Namespace',
+          name: ns,
+          reason: 'NamespaceHotspot',
+          message: `Namespace ${ns} consumes ${(100 * (agg.cpu / totalCpu)).toFixed(0)}% of observed pod CPU`,
+          recommendation: 'Verify this is expected. Consider quotas or cost allocation if needed.',
+        });
+      }
+    }
+
+    // Summarize health levels
+    const counts: Record<string, number> = { info: 0, warning: 0, critical: 0 };
+    for (const f of findings) counts[f.severity]++;
+    const health: 'healthy' | 'degraded' | 'critical' =
+      counts.critical > 0 ? 'critical' : counts.warning > 0 ? 'degraded' : 'healthy';
+
+    return { findings, counts, health };
   }
 
   /**

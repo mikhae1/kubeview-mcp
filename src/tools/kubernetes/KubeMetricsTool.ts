@@ -13,15 +13,15 @@ export class KubeMetricsTool implements BaseTool {
   tool: Tool = {
     name: 'kube_metrics',
     description:
-      'Get live CPU/memory metrics for nodes or pods with optional Prometheus enrichment.',
+      'One-shot cluster metrics and diagnostics. By default returns node and workload (pods) CPU/memory plus a summary and detected problems. Supports optional focus on nodes or pods, namespace scoping, and Prometheus enrichment.',
     inputSchema: {
       type: 'object',
       properties: {
         scope: {
           type: 'string',
-          description: 'Metric scope',
-          enum: ['nodes', 'pods'],
-          default: 'pods',
+          description: 'Metric scope (default: all).',
+          enum: ['all', 'nodes', 'pods'],
+          default: 'all',
         },
         namespace: {
           ...CommonSchemas.namespace,
@@ -32,6 +32,17 @@ export class KubeMetricsTool implements BaseTool {
           type: 'string',
           description: 'Optional specific pod to fetch metrics for (requires namespace).',
           optional: true,
+        },
+        diagnostics: {
+          type: 'boolean',
+          description:
+            'If true, runs built-in checks (CrashLoopBackOff, OOMKilled, high restarts, Pending pods, node pressure/NotReady, high utilization, missing limits).',
+          default: false,
+        },
+        includeSummary: {
+          type: 'boolean',
+          description: 'If true, include a compact top-N summary in the output.',
+          default: false,
         },
         prometheusQueries: {
           type: 'array',
@@ -46,39 +57,65 @@ export class KubeMetricsTool implements BaseTool {
             'If true, fetch pod specs to enrich pod metrics (e.g., nodeName). Defaults to true.',
           default: true,
         },
+        topN: {
+          type: 'number',
+          description: 'Number of top pods/namespaces to include in summary.',
+          default: 5,
+        },
+        cpuSaturationThreshold: {
+          type: 'number',
+          description: 'Node CPU saturation threshold (fraction of allocatable).',
+          default: 0.9,
+        },
+        memorySaturationThreshold: {
+          type: 'number',
+          description: 'Node memory saturation threshold (fraction of allocatable).',
+          default: 0.9,
+        },
+        podRestartThreshold: {
+          type: 'number',
+          description: 'Per-container restart count threshold for warnings.',
+          default: 5,
+        },
+        podLimitPressureThreshold: {
+          type: 'number',
+          description: 'Pod usage/limit threshold to warn (fraction).',
+          default: 0.8,
+        },
       },
     },
   };
 
   async execute(params: any, client: KubernetesClient): Promise<any> {
-    const { scope = 'pods', namespace, podName, fetchPodSpecs = true } = params || {};
+    const {
+      scope = 'all',
+      namespace,
+      podName,
+      fetchPodSpecs = true,
+      diagnostics = true,
+      includeSummary = false,
+      topN = 5,
+      cpuSaturationThreshold = 0.9,
+      memorySaturationThreshold = 0.9,
+      podRestartThreshold = 5,
+      podLimitPressureThreshold = 0.8,
+    } = params || {};
 
-    // Provide sensible default Prometheus queries if none were supplied
-    // to allow metrics without Metrics Server or kubelet access.
-    let prometheusQueries: string[] = Array.isArray(params?.prometheusQueries)
+    // Validate required args for specific pod fetch
+    if (podName && !namespace && scope !== 'nodes') {
+      return { normalizedPods: [], normalizedNodes: [], error: 'No data' };
+    }
+
+    // Do not auto-inject Prometheus queries by default to avoid network hangs
+    // when running outside the cluster. Only use if provided explicitly.
+    const prometheusQueries: string[] = Array.isArray(params?.prometheusQueries)
       ? (params.prometheusQueries as string[])
       : [];
-    if (!prometheusQueries || prometheusQueries.length === 0) {
-      if (scope === 'nodes') {
-        prometheusQueries = [
-          // CPU: non-idle CPU seconds rate per node
-          'sum by (node) (rate(node_cpu_seconds_total{mode!="idle"}[5m]))',
-          // Memory: available bytes per node (attach as custom metric)
-          'node_memory_MemAvailable_bytes',
-        ];
-      } else {
-        // Pods scope (default): CPU and memory per pod
-        prometheusQueries = [
-          'sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{container!="",pod!=""}[5m]))',
-          'sum by (namespace,pod) (container_memory_working_set_bytes{container!="",pod!=""})',
-        ];
-      }
-    }
 
     const metrics = new MetricOperations(client);
 
     // Fast path: specific pod
-    if (scope === 'pods' && podName && namespace) {
+    if (scope !== 'nodes' && podName && namespace) {
       const podMetric = await metrics.getPodMetricsByName(podName, namespace);
       if (!podMetric) return { normalizedPods: [], normalizedNodes: [], error: 'No metrics found' };
       const normalizedPod: NormalizedPodMetric = {
@@ -108,22 +145,76 @@ export class KubeMetricsTool implements BaseTool {
       return { normalizedPods: [normalizedPod], normalizedNodes: [] };
     }
 
-    // General path: combined metrics with optional Prometheus enrichment
-    const result = await metrics.getAllNormalizedMetrics(
+    // General path: gather metrics with direct API first (fast), fallback internally
+    // Default behavior: if no namespace provided and we are fetching pods, use current context namespace
+    const effectiveNamespace =
+      typeof namespace === 'string'
+        ? namespace
+        : scope === 'nodes'
+          ? undefined
+          : client.getCurrentNamespace();
+
+    const result = await metrics.getMetricsWithOptions(
       Array.isArray(prometheusQueries) ? prometheusQueries : [],
       !!fetchPodSpecs,
-      typeof namespace === 'string' ? namespace : undefined,
+      effectiveNamespace,
     );
-    const safeResult = result || { nodesMetrics: [], podsMetrics: [], error: 'No data' };
+
+    const safe = (result as any) || {};
+    const normalizedNodes = (safe.normalizedNodes as any[]) ?? (safe.nodesMetrics as any[]) ?? [];
+    const normalizedPods = (safe.normalizedPods as any[]) ?? (safe.podsMetrics as any[]) ?? [];
+
+    // Build compact LLM-friendly summary
+    const summary = includeSummary
+      ? metrics.buildLLMSummary(
+          scope === 'pods' ? [] : normalizedNodes,
+          scope === 'nodes' ? [] : normalizedPods,
+          topN,
+        )
+      : undefined;
+
+    // Optional diagnostics
+    let diagnosticsOut: any = undefined;
+    if (diagnostics) {
+      diagnosticsOut = await metrics.detectProblems(
+        scope === 'pods' ? [] : normalizedNodes,
+        scope === 'nodes' ? [] : normalizedPods,
+        {
+          namespace: effectiveNamespace,
+          cpuSaturationThreshold,
+          memorySaturationThreshold,
+          podRestartThreshold,
+          podLimitPressureThreshold,
+          includeNodeFindings: false,
+        },
+      );
+    }
 
     if (scope === 'nodes') {
       return {
-        normalizedNodes: safeResult.nodesMetrics,
+        normalizedNodes,
         normalizedPods: [],
-        error: safeResult.error,
+        summary,
+        diagnostics: diagnosticsOut,
+        error: result.error,
       };
     }
-
-    return { normalizedPods: safeResult.podsMetrics, normalizedNodes: [], error: safeResult.error };
+    if (scope === 'pods') {
+      return {
+        normalizedNodes: [],
+        normalizedPods,
+        summary,
+        diagnostics: diagnosticsOut,
+        error: result.error,
+      };
+    }
+    // scope === 'all'
+    return {
+      normalizedNodes,
+      normalizedPods,
+      summary,
+      diagnostics: diagnosticsOut,
+      error: result.error,
+    };
   }
 }
