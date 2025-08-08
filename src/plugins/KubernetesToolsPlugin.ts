@@ -48,6 +48,9 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
 
   constructor(private config?: KubernetesClientConfig) {
     super();
+    // Merge env-derived config defaults if not explicitly provided
+    const envConfig = this.buildConfigFromEnv();
+    this.config = { ...envConfig, ...(this.config || {}) };
   }
 
   /**
@@ -131,7 +134,8 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
     plugin.buildCommandMap();
 
     const logger = this.createLogger();
-    const client = new KubernetesClient(logger ? { logger } : {});
+    const envConfig = plugin.buildConfigFromEnv();
+    const client = new KubernetesClient(logger ? { ...envConfig, logger } : envConfig);
     await client.refreshCurrentContext();
     const connected = await client.testConnection();
     if (!connected) {
@@ -171,6 +175,22 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
       this.logger?.error('Failed to create new Kubernetes client', error);
       throw error;
     }
+  }
+
+  /** Build Kubernetes client config from environment variables */
+  private buildConfigFromEnv(): KubernetesClientConfig {
+    const cfg: KubernetesClientConfig = {};
+    const context = process.env.KUBE_CONTEXT;
+    if (context && typeof context === 'string' && context.trim().length > 0) {
+      cfg.context = context.trim();
+    }
+
+    const skipTlsEnv = process.env.K8S_SKIP_TLS_VERIFY;
+    if (skipTlsEnv && (skipTlsEnv === 'true' || skipTlsEnv === '1')) {
+      cfg.skipTlsVerify = true;
+    }
+
+    return cfg;
   }
 
   async initialize(server: MCPServer): Promise<void> {

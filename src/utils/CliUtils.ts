@@ -89,9 +89,16 @@ export async function executeCliCommand(
 ): Promise<any> {
   const timeout = parseInt(process.env[timeoutEnvVar] || '30000', 10);
   const useShell = false; // Security-first approach: never use shell
+  const overridePathEnvVar = `${toolName.toUpperCase()}_PATH`;
+  const effectiveExecutable = process.env[overridePathEnvVar] || executablePath;
 
   if (process.env.LOG_LEVEL === 'debug') {
     console.debug(`Executing: ${toolName} ${args.join(' ')}`);
+    if (process.env[overridePathEnvVar]) {
+      console.debug(
+        `Using override executable via ${overridePathEnvVar}: ${process.env[overridePathEnvVar]}`,
+      );
+    }
     console.debug(`Using shell: ${useShell}`);
   }
 
@@ -104,7 +111,11 @@ export async function executeCliCommand(
       env: { ...process.env },
     };
 
-    const childProcess: ChildProcessWithoutNullStreams = spawn(executablePath, args, spawnOptions);
+    const childProcess: ChildProcessWithoutNullStreams = spawn(
+      effectiveExecutable,
+      args,
+      spawnOptions,
+    );
 
     let stdout = '';
     let stderr = '';

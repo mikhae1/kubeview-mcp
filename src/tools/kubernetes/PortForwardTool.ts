@@ -95,7 +95,8 @@ export class PortForwardTool implements BaseTool {
     const willStopAt = new Date(startedAt.getTime() + timeoutSeconds * 1000);
 
     // Spawn kubectl port-forward
-    const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const kubectlPath = process.env.KUBECTL_PATH || 'kubectl';
+    const child = spawn(kubectlPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let ready = false;
     let stdoutBuffer = '';

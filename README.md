@@ -18,6 +18,7 @@
     - [Installation](#installation)
     - [Build & Run](#build--run)
   - [📟 CLI Reference](#-cli-reference)
+  - [⚙️ Configuration](#️-configuration)
     - [Resource Management](#resource-management)
     - [Storage & Persistence](#storage--persistence)
     - [Monitoring & Observability](#monitoring--observability)
@@ -148,6 +149,74 @@ npm run command -- <tool_name> [tool options]
 | Tool           | Description                               |
 | -------------- | ----------------------------------------- |
 | `get_resource` | Inspect any Kubernetes resource by GVR    |
+
+---
+
+## ⚙️ Configuration
+
+KubeView MCP is configured primarily via environment variables provided by your MCP client (for example in `mcp.json`) or your shell. Below are all supported options discovered in the codebase today, plus a few proposed options that would be useful to add.
+
+### Environment variables (implemented)
+
+- **KUBECONFIG**: Path to your kubeconfig. Supports multiple paths separated by `:`; the first existing file is used. Defaults to `$HOME/.kube/config` if unset.
+  - Example in `mcp.json`:
+    ```json
+    {
+      "mcpServers": {
+        "kubeview-mcp": {
+          "command": "npx",
+          "args": ["https://github.com/mikhae1/kubeview-mcp"],
+          "env": {
+            "KUBECONFIG": "$HOME/.kube/config"
+          }
+        }
+      }
+    }
+    ```
+
+- **LOG_LEVEL**: Controls logging verbosity for the server and plugins. If unset, defaults to `info` for the server and disables extra plugin logging.
+  - Valid values: `error`, `warn`, `info`, `verbose`, `debug`, `silly`
+  - When set to `debug`, extra diagnostic output is emitted by certain CLI wrappers.
+  - The server writes logs to stderr/console and to `kubeview-mcp.log` in the working directory.
+
+- **HELM_TIMEOUT**: Timeout in milliseconds for `helm` CLI invocations. Default: `30000`.
+- **ARGO_TIMEOUT**: Timeout in milliseconds for `argo` CLI invocations. Default: `30000`.
+- **ARGOCD_TIMEOUT**: Timeout in milliseconds for `argocd` CLI invocations. Default: `30000`.
+
+- **DISABLE_KUBERNETES_PLUGIN**: Disable the Kubernetes tools plugin entirely. Values: `"true"` or `"1"` to disable.
+- **DISABLE_HELM_PLUGIN**: Disable the Helm tools plugin. Values: `"true"` or `"1"` to disable.
+- **DISABLE_ARGO_PLUGIN**: Disable the Argo tools plugin. Values: `"true"` or `"1"` to disable.
+- **DISABLE_ARGOCD_PLUGIN**: Disable the ArgoCD tools plugin. Values: `"true"` or `"1"` to disable.
+
+Notes:
+- Helm/Argo/ArgoCD tools depend on their respective CLIs being available on your `PATH`. The project will also check common install paths (e.g., `/opt/homebrew/bin/helm`) if not found on `PATH` and provide a helpful error if missing.
+
+### Kubernetes authentication modes
+
+The underlying client supports multiple auth modes, though by default the MCP server uses your kubeconfig:
+
+- **Kubeconfig (default)**: Uses `KUBECONFIG` or `$HOME/.kube/config`, and the current context in that file.
+- **In-cluster**: Supported by the core client. Not wired to an env var yet in the server entrypoint.
+- **Bearer token**: Supported by the core client (`apiServerUrl`, `bearerToken`, optional `skipTlsVerify`). Not wired to env vars yet in the server entrypoint.
+- **KUBE_CONTEXT**: Force a specific kubeconfig context (instead of the current context) for Kubernetes tools.
+- **K8S_SKIP_TLS_VERIFY**: `true`/`1` to skip TLS verification when using token-based auth.
+- **HELM_PATH / ARGO_PATH / ARGOCD_PATH / KUBECTL_PATH**: Override autodetected CLI executable paths for Helm, Argo, ArgoCD, and kubectl.
+
+If you embed KubeView MCP as a library, you can construct `KubernetesClient` with these options directly.
+
+### Example: configuring via shell
+
+```bash
+export KUBECONFIG=$HOME/.kube/config
+export LOG_LEVEL=info
+export HELM_TIMEOUT=45000
+export ARGO_TIMEOUT=45000
+export ARGOCD_TIMEOUT=60000
+
+# Optionally disable plugins you don't use
+export DISABLE_ARGO_PLUGIN=1
+export DISABLE_ARGOCD_PLUGIN=true
+```
 
 ---
 
