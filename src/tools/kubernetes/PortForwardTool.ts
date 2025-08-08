@@ -1,12 +1,13 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { BaseTool, CommonSchemas } from './BaseTool.js';
 import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
-import { spawn } from 'child_process';
+import * as k8s from '@kubernetes/client-node';
 import * as net from 'net';
+import { PassThrough } from 'node:stream';
 
 /**
  * Temporary port-forward to a pod or service for local probing.
- * Uses `kubectl port-forward` under the hood and auto-stops after a timeout.
+ * Implements port-forward purely via Kubernetes API (no kubectl) and auto-stops after a timeout.
  */
 export class PortForwardTool implements BaseTool {
   tool: Tool = {
@@ -60,7 +61,7 @@ export class PortForwardTool implements BaseTool {
     },
   };
 
-  async execute(params: any, _client: KubernetesClient): Promise<any> {
+  async execute(params: any, client: KubernetesClient): Promise<any> {
     const namespace: string = params.namespace || 'default';
     const podName: string | undefined = params.podName;
     const serviceName: string | undefined = params.serviceName;
@@ -80,88 +81,124 @@ export class PortForwardTool implements BaseTool {
       throw new Error('remotePort must be a number');
     }
 
-    const resource = podName ? `pod/${podName}` : `svc/${serviceName}`;
-    const args = [
-      '-n',
+    // Resolve target pod and container port
+    const { targetPodName, targetContainerPort } = await this.resolveTargetPodAndPort(
+      client,
       namespace,
-      'port-forward',
-      resource,
-      `${localPort}:${remotePort}`,
-      '--address',
-      address,
-    ];
+      podName,
+      serviceName,
+      remotePort,
+    );
+
+    const resource = `pod/${targetPodName}`;
 
     const startedAt = new Date();
     const willStopAt = new Date(startedAt.getTime() + timeoutSeconds * 1000);
 
-    // Spawn kubectl port-forward
-    const kubectlPath = process.env.KUBECTL_PATH || 'kubectl';
-    const child = spawn(kubectlPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const portForward = new k8s.PortForward(client.kubeConfig);
+    const activeConnections: Array<{ socket: net.Socket; closeWs: () => void }> = [];
 
-    let ready = false;
-    let stdoutBuffer = '';
-    let stderrBuffer = '';
+    // Create local TCP server which forwards each incoming TCP stream via Kubernetes PortForward
+    const server = net.createServer((socket) => {
+      const errStream = new PassThrough();
+      errStream.on('data', () => {
+        // Swallow remote error stream; socket 'error' will fire on failures
+        void 0;
+      });
 
-    const cleanup = () => {
-      child.removeAllListeners();
-      if (!child.killed) {
-        try {
-          child.kill('SIGTERM');
-        } catch {
-          // ignore
-        }
-      }
-    };
+      portForward
+        .portForward(namespace, targetPodName, [targetContainerPort], socket, errStream, socket)
+        .then((result: any) => {
+          let closeWs: () => void = () => undefined;
+          if (typeof result === 'function') {
+            closeWs = () => {
+              try {
+                const ws = result();
+                ws?.close();
+              } catch {
+                void 0;
+              }
+            };
+          } else if (result && typeof result.close === 'function') {
+            closeWs = () => {
+              try {
+                result.close();
+              } catch {
+                void 0;
+              }
+            };
+          }
+
+          activeConnections.push({ socket, closeWs });
+          const remove = () => {
+            const idx = activeConnections.findIndex((c) => c.socket === socket);
+            if (idx >= 0) activeConnections.splice(idx, 1);
+            try {
+              closeWs();
+            } catch {
+              void 0;
+            }
+          };
+          socket.once('close', remove);
+          socket.once('error', remove);
+        })
+        .catch((_err) => {
+          try {
+            socket.destroy();
+          } catch {
+            void 0;
+          }
+        });
+    });
+
+    const serverReady = new Promise<void>((resolve, reject) => {
+      const readyTimer = setTimeout(() => {
+        reject(new Error('Timed out waiting for port-forward server readiness'));
+      }, readinessTimeout * 1000);
+
+      server.once('listening', () => {
+        clearTimeout(readyTimer);
+        resolve();
+      });
+      server.once('error', (err) => {
+        clearTimeout(readyTimer);
+        reject(err);
+      });
+    });
+
+    server.listen(localPort, address);
 
     // Auto-stop after timeoutSeconds
     const stopTimer = setTimeout(() => {
-      cleanup();
+      try {
+        server.close();
+      } catch {
+        void 0;
+      }
+      for (const { socket, closeWs } of activeConnections.splice(0)) {
+        try {
+          closeWs();
+        } catch {
+          void 0;
+        }
+        try {
+          socket.destroy();
+        } catch {
+          void 0;
+        }
+      }
     }, timeoutSeconds * 1000);
 
-    // Resolve when ready line appears or timeout expires
-    const readiness = new Promise<void>((resolve, reject) => {
-      const onData = (data: Buffer) => {
-        stdoutBuffer += data.toString();
-        if (/Forwarding from /.test(stdoutBuffer)) {
-          ready = true;
-          child.stdout?.off('data', onData);
-          resolve();
-        }
-      };
-      const onErr = (data: Buffer) => {
-        stderrBuffer += data.toString();
-        // Some kubectl versions write readiness to stderr; accept either
-        if (/Forwarding from /.test(stderrBuffer)) {
-          ready = true;
-          child.stderr?.off('data', onErr);
-          resolve();
-        }
-      };
-      const onClose = (code: number | null) => {
-        if (!ready) {
-          reject(new Error(`kubectl port-forward exited prematurely with code ${code}`));
-        }
-      };
-
-      child.stdout?.on('data', onData);
-      child.stderr?.on('data', onErr);
-      child.once('close', onClose);
-
-      setTimeout(() => {
-        if (!ready) {
-          reject(new Error('Timed out waiting for port-forward readiness'));
-        }
-      }, readinessTimeout * 1000);
-    });
-
     try {
-      await readiness;
+      await serverReady;
     } catch (error: any) {
       clearTimeout(stopTimer);
-      cleanup();
-      const hint = stderrBuffer || stdoutBuffer;
-      const message = error?.message || 'Failed to start port-forward';
-      throw new Error(`${message}${hint ? `\nDetails: ${hint}` : ''}`);
+      try {
+        server.close();
+      } catch {
+        void 0;
+      }
+      throw new Error(error?.message || 'Failed to start port-forward server');
     }
 
     return {
@@ -169,12 +206,11 @@ export class PortForwardTool implements BaseTool {
       namespace,
       localAddress: address,
       localPort,
-      remotePort,
-      processId: child.pid,
+      remotePort: targetContainerPort,
       startedAt: startedAt.toISOString(),
       willStopAt: willStopAt.toISOString(),
       notes:
-        'Port-forward started via kubectl and will be auto-terminated after timeoutSeconds. Use the local address/port until then.',
+        'Port-forward started via Kubernetes API and will be auto-terminated after timeoutSeconds. Connect to the local address/port until then.',
     };
   }
 
@@ -192,5 +228,80 @@ export class PortForwardTool implements BaseTool {
         }
       });
     });
+  }
+
+  private async resolveTargetPodAndPort(
+    client: KubernetesClient,
+    namespace: string,
+    podName: string | undefined,
+    serviceName: string | undefined,
+    servicePortOrTarget: number,
+  ): Promise<{ targetPodName: string; targetContainerPort: number }> {
+    if (podName) {
+      // Direct pod forwarding to the specified target port
+      return { targetPodName: podName, targetContainerPort: servicePortOrTarget };
+    }
+
+    // Resolve service -> pod and container port using Endpoints
+    if (!serviceName) {
+      throw new Error('Either podName or serviceName must be provided');
+    }
+
+    // Fetch Service to identify port name mapping (optional but helpful)
+    let service: any | undefined;
+    try {
+      service = await client.resources.service.get(serviceName, { namespace });
+    } catch {
+      // continue; we'll rely on Endpoints if possible
+    }
+
+    const endpoints = await client.resources.service.getEndpoints(serviceName, { namespace });
+    if (!endpoints || !endpoints.subsets || endpoints.subsets.length === 0) {
+      throw new Error(`Service '${serviceName}' has no ready endpoints`);
+    }
+
+    // Determine the service port name that matches the requested servicePortOrTarget
+    let desiredPortName: string | undefined;
+    let directTargetPort: number | undefined;
+    if (service?.spec?.ports?.length) {
+      const match = service.spec.ports.find((p: any) => p?.port === servicePortOrTarget);
+      if (match) {
+        desiredPortName = match.name;
+        if (typeof match.targetPort === 'number') {
+          directTargetPort = match.targetPort;
+        }
+      }
+    }
+
+    for (const subset of endpoints.subsets) {
+      const readyAddresses = subset.addresses || [];
+      if (!readyAddresses.length) continue;
+
+      // Choose port: prefer matching by name, otherwise use directTargetPort, otherwise first port
+      let chosenPort: number | undefined;
+      if (desiredPortName && subset.ports) {
+        const epPort = subset.ports.find((p: any) => p?.name === desiredPortName);
+        if (epPort?.port) chosenPort = epPort.port;
+      }
+      if (!chosenPort && typeof directTargetPort === 'number') {
+        chosenPort = directTargetPort;
+      }
+      if (!chosenPort && subset.ports && subset.ports.length > 0) {
+        // As a last resort, try to match the numeric service port to an endpoint port
+        const numericMatch = subset.ports.find((p: any) => p?.port === servicePortOrTarget);
+        chosenPort = numericMatch?.port ?? subset.ports[0].port;
+      }
+
+      // Find a targetRef Pod to forward to
+      const addressWithPod = readyAddresses.find((a: any) => a?.targetRef?.kind === 'Pod');
+      const targetPodName = addressWithPod?.targetRef?.name;
+      if (targetPodName && chosenPort) {
+        return { targetPodName, targetContainerPort: chosenPort };
+      }
+    }
+
+    throw new Error(
+      `Failed to resolve a target Pod/port for service '${serviceName}' on port ${servicePortOrTarget}`,
+    );
   }
 }
