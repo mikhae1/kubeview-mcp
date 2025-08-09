@@ -67,6 +67,7 @@ export class KubernetesClient {
   private appsV1Api!: k8s.AppsV1Api;
   private batchV1Api!: k8s.BatchV1Api;
   private networkingV1Api!: k8s.NetworkingV1Api;
+  private storageV1Api!: k8s.StorageV1Api;
   private autoscalingV2Api!: k8s.AutoscalingV2Api;
   private policyV1Api!: k8s.PolicyV1Api;
   private discoveryV1Api!: k8s.DiscoveryV1Api;
@@ -227,6 +228,7 @@ export class KubernetesClient {
     this.appsV1Api = this.kc.makeApiClient(k8s.AppsV1Api);
     this.batchV1Api = this.kc.makeApiClient(k8s.BatchV1Api);
     this.networkingV1Api = this.kc.makeApiClient(k8s.NetworkingV1Api);
+    this.storageV1Api = this.kc.makeApiClient(k8s.StorageV1Api);
     // Additional APIs for debugging tools
     this.autoscalingV2Api = this.kc.makeApiClient(k8s.AutoscalingV2Api);
     this.policyV1Api = this.kc.makeApiClient(k8s.PolicyV1Api);
@@ -416,6 +418,10 @@ export class KubernetesClient {
 
   public get networking(): k8s.NetworkingV1Api {
     return this.networkingV1Api;
+  }
+
+  public get storage(): k8s.StorageV1Api {
+    return this.storageV1Api;
   }
 
   public get kubeConfig(): k8s.KubeConfig {

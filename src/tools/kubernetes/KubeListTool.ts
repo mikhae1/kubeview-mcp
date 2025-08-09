@@ -55,12 +55,91 @@ export class KubeListTool implements BaseTool {
         namespace: CommonSchemas.namespace,
         labelSelector: CommonSchemas.labelSelector,
         fieldSelector: CommonSchemas.fieldSelector,
+        // Generic toggles for enriched diagnostics (mainly used for PV/PVC)
+        includeAnalysis: {
+          type: 'boolean',
+          description:
+            'Include server-side diagnostics/analysis where available (e.g. storage analysis)',
+          optional: true,
+          default: true,
+        },
+        includeEvents: {
+          type: 'boolean',
+          description: 'Include recent Warning/Normal events correlated to resources (PV/PVC)',
+          optional: true,
+          default: false,
+        },
+        includePods: {
+          type: 'boolean',
+          description: 'Include pods that consume PVCs and perform mount diagnostics',
+          optional: true,
+          default: false,
+        },
+        includeCSI: {
+          type: 'boolean',
+          description: 'Include CSI driver and VolumeAttachment correlation',
+          optional: true,
+          default: false,
+        },
+        includeQuotas: {
+          type: 'boolean',
+          description: 'Include ResourceQuota/LimitRange checks for PVC sizing',
+          optional: true,
+          default: false,
+        },
+        since: {
+          type: 'string',
+          description: 'Time window for event correlation (e.g., "30m", "2h", "1d")',
+          optional: true,
+        },
+        // Storage-oriented filters
+        storageClass: {
+          type: 'string',
+          description: 'Filter by storage class (PV/PVC)',
+          optional: true,
+        },
+        reclaimPolicy: {
+          type: 'string',
+          description: 'Filter PVs by reclaim policy (Retain, Delete, Recycle)',
+          optional: true,
+        },
+        accessMode: {
+          type: 'string',
+          description: 'Filter PV/PVC by access mode (ReadWriteOnce, ReadOnlyMany, ReadWriteMany)',
+          optional: true,
+        },
+        volumeMode: {
+          type: 'string',
+          description: 'Filter PVC by volume mode (Filesystem, Block)',
+          optional: true,
+        },
+        name: {
+          type: 'string',
+          description: 'Filter by specific resource name (PV/PVC)',
+          optional: true,
+        },
       },
     },
   };
 
   async execute(params: any, client: KubernetesClient): Promise<any> {
-    const { resourceType, namespace, labelSelector, fieldSelector } = params || {};
+    const {
+      resourceType,
+      namespace,
+      labelSelector,
+      fieldSelector,
+      includeAnalysis = true,
+      includeEvents = false,
+      includePods = false,
+      includeCSI = false,
+      includeQuotas = false,
+      since,
+      storageClass,
+      reclaimPolicy,
+      accessMode,
+      volumeMode,
+      name,
+    } = params || {};
 
     // Default diagnostics overview when no resourceType provided
     if (!resourceType) {
@@ -93,12 +172,35 @@ export class KubeListTool implements BaseTool {
         return ops.list();
       }
       case 'persistentvolume': {
-        const ops = new PersistentVolumeOperations(client);
-        return ops.list();
+        return this.listPersistentVolumesWithDiagnostics(client, {
+          labelSelector,
+          fieldSelector,
+          includeAnalysis,
+          includeEvents,
+          includeCSI,
+          since,
+          storageClass,
+          reclaimPolicy,
+          accessMode,
+          name,
+        });
       }
       case 'persistentvolumeclaim': {
-        const ops = new PersistentVolumeClaimOperations(client);
-        return ops.list({ namespace });
+        return this.listPersistentVolumeClaimsWithDiagnostics(client, {
+          namespace,
+          labelSelector,
+          fieldSelector,
+          includeAnalysis,
+          includeEvents,
+          includePods,
+          includeCSI,
+          includeQuotas,
+          since,
+          storageClass,
+          accessMode,
+          volumeMode,
+          name,
+        });
       }
       case 'node': {
         // Use core API directly for nodes
@@ -291,6 +393,623 @@ export class KubeListTool implements BaseTool {
       insights: insights,
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * List PersistentVolumes with optional diagnostics, events, and CSI correlation
+   */
+  private async listPersistentVolumesWithDiagnostics(
+    client: KubernetesClient,
+    options: {
+      labelSelector?: string;
+      fieldSelector?: string;
+      includeAnalysis?: boolean;
+      includeEvents?: boolean;
+      includeCSI?: boolean;
+      since?: string;
+      storageClass?: string;
+      reclaimPolicy?: string;
+      accessMode?: string;
+      name?: string;
+    },
+  ): Promise<any> {
+    const pvOps = new PersistentVolumeOperations(client);
+
+    const listFilters = {
+      labelSelector: options.labelSelector,
+      fieldSelector: options.fieldSelector,
+      storageClass: options.storageClass,
+      reclaimPolicy: options.reclaimPolicy,
+      accessMode: options.accessMode,
+    } as any;
+
+    let pvItems: any[] = [];
+    if (options.name) {
+      try {
+        const single = await pvOps.get(options.name);
+        if (single) pvItems = [single];
+      } catch {
+        pvItems = [];
+      }
+    } else {
+      const list = await pvOps.list(listFilters);
+      pvItems = list?.items || [];
+    }
+
+    let analysis: any | undefined = undefined;
+    if (options.includeAnalysis !== false) {
+      analysis = await pvOps.analyzePVs(listFilters).catch(() => undefined);
+    }
+
+    let csi: any | undefined = undefined;
+    if (options.includeCSI) {
+      csi = await this.getCsiCorrelationForPVs(client, pvItems).catch(() => undefined);
+    }
+
+    let eventsByPV: Record<string, any[]> | undefined = undefined;
+    if (options.includeEvents) {
+      eventsByPV = await this.getEventsForObjects(
+        client,
+        pvItems.map((pv) => ({ kind: 'PersistentVolume', name: pv?.metadata?.name })),
+        options.since,
+      ).catch(() => undefined);
+    }
+
+    // Topology: evaluate nodeAffinity feasibility by checking matching nodes
+    let nodeAffinityMatchesByPV: Record<string, number> | undefined = undefined;
+    try {
+      const nodesResp = await client.core.listNode();
+      const nodes = nodesResp?.items || [];
+      nodeAffinityMatchesByPV = {};
+      for (const pv of pvItems) {
+        const name = pv?.metadata?.name || '';
+        const terms = pv?.spec?.nodeAffinity?.required?.nodeSelectorTerms || [];
+        if (terms.length === 0) {
+          nodeAffinityMatchesByPV[name] = nodes.length; // no restriction
+          continue;
+        }
+        let matchCount = 0;
+        for (const node of nodes) {
+          if (this.nodeMatchesSelectorTerms(node, terms)) matchCount += 1;
+        }
+        nodeAffinityMatchesByPV[name] = matchCount;
+      }
+    } catch {
+      // ignore topology errors
+    }
+
+    const items = pvItems.map((pv) => {
+      const key = pv?.metadata?.name || '';
+      return {
+        metadata: {
+          name: pv?.metadata?.name,
+          uid: pv?.metadata?.uid,
+          creationTimestamp: pv?.metadata?.creationTimestamp,
+          deletionTimestamp: pv?.metadata?.deletionTimestamp,
+          finalizers: pv?.metadata?.finalizers || [],
+          labels: pv?.metadata?.labels || {},
+          annotations: pv?.metadata?.annotations || {},
+        },
+        spec: {
+          capacity: pv?.spec?.capacity,
+          storageClassName: pv?.spec?.storageClassName,
+          accessModes: pv?.spec?.accessModes,
+          volumeMode: pv?.spec?.volumeMode,
+          persistentVolumeReclaimPolicy: pv?.spec?.persistentVolumeReclaimPolicy,
+          claimRef: pv?.spec?.claimRef,
+          nodeAffinity: pv?.spec?.nodeAffinity,
+          csi: pv?.spec?.csi,
+        },
+        status: {
+          phase: pv?.status?.phase,
+          reason: pv?.status?.reason,
+          message: pv?.status?.message,
+        },
+        attachments: csi?.attachmentsByPV?.[key],
+        driverPresent: csi?.driverPresenceByPV?.[key],
+        events: eventsByPV?.[key],
+        topology: nodeAffinityMatchesByPV
+          ? { matchingNodes: nodeAffinityMatchesByPV[key] ?? null }
+          : undefined,
+      };
+    });
+
+    return {
+      total: items.length,
+      analysis,
+      storageClassSummary: csi?.storageClassSummary,
+      csiDrivers: csi?.drivers,
+      items,
+    };
+  }
+
+  /**
+   * List PersistentVolumeClaims with optional diagnostics, events, pod and CSI correlation, and quotas
+   */
+  private async listPersistentVolumeClaimsWithDiagnostics(
+    client: KubernetesClient,
+    options: {
+      namespace?: string;
+      labelSelector?: string;
+      fieldSelector?: string;
+      includeAnalysis?: boolean;
+      includeEvents?: boolean;
+      includePods?: boolean;
+      includeCSI?: boolean;
+      includeQuotas?: boolean;
+      since?: string;
+      storageClass?: string;
+      accessMode?: string;
+      volumeMode?: string;
+      name?: string;
+    },
+  ): Promise<any> {
+    const pvcOps = new PersistentVolumeClaimOperations(client);
+    const listFilters = {
+      namespace: options.namespace,
+      labelSelector: options.labelSelector,
+      fieldSelector: options.fieldSelector,
+      storageClass: options.storageClass,
+      accessMode: options.accessMode,
+      volumeMode: options.volumeMode,
+    } as any;
+
+    let pvcItems: any[] = [];
+    if (options.name) {
+      try {
+        const single = await pvcOps.get(options.name, { namespace: options.namespace });
+        if (single) pvcItems = [single];
+      } catch {
+        pvcItems = [];
+      }
+    } else {
+      const list = await pvcOps.list(listFilters);
+      pvcItems = list?.items || [];
+    }
+
+    let analysis: any | undefined = undefined;
+    if (options.includeAnalysis !== false) {
+      analysis = await pvcOps.analyzePVCs(listFilters).catch(() => undefined);
+    }
+
+    const bindingStatus = await pvcOps.checkBindingStatus().catch(() => undefined);
+
+    const pvList = await client.core.listPersistentVolume().catch(() => ({ items: [] as any[] }));
+
+    let csi: any | undefined = undefined;
+    if (options.includeCSI) {
+      csi = await this.getCsiCorrelationForPVCs(client, pvcItems).catch(() => undefined);
+    }
+
+    const podsByPVC: Record<string, any[]> = {};
+    if (options.includePods) {
+      const pods = options.namespace
+        ? ((await client.core
+            .listNamespacedPod({ namespace: options.namespace } as any)
+            .catch(() => ({ items: [] as any[] }))) as any)
+        : ((await client.core
+            .listPodForAllNamespaces({})
+            .catch(() => ({ items: [] as any[] }))) as any);
+      const items = pods?.items || [];
+      for (const pvc of pvcItems) {
+        const pvcKey = `${pvc?.metadata?.namespace}/${pvc?.metadata?.name}`;
+        const consumers = items.filter((pod: any) => {
+          const vols = pod?.spec?.volumes || [];
+          return vols.some((v: any) => v?.persistentVolumeClaim?.claimName === pvc?.metadata?.name);
+        });
+        podsByPVC[pvcKey] = consumers.map((p: any) => ({
+          name: p?.metadata?.name,
+          namespace: p?.metadata?.namespace,
+          phase: p?.status?.phase,
+          nodeName: p?.spec?.nodeName,
+          containerStatuses: p?.status?.containerStatuses || [],
+        }));
+      }
+    }
+
+    let eventsByPVC: Record<string, any[]> | undefined = undefined;
+    if (options.includeEvents) {
+      eventsByPVC = await this.getEventsForObjects(
+        client,
+        pvcItems.map((pvc) => ({
+          kind: 'PersistentVolumeClaim',
+          name: pvc?.metadata?.name,
+          namespace: pvc?.metadata?.namespace,
+        })),
+        options.since,
+      ).catch(() => undefined);
+    }
+
+    let quotaDiagnostics: Record<string, any> | undefined = undefined;
+    if (options.includeQuotas) {
+      if (options.namespace) {
+        quotaDiagnostics = await this.getQuotaDiagnosticsForPVCs(
+          client,
+          pvcItems,
+          options.namespace,
+        ).catch(() => undefined);
+      } else {
+        quotaDiagnostics = {};
+      }
+    }
+
+    const items = pvcItems.map((pvc) => {
+      const key = `${pvc?.metadata?.namespace}/${pvc?.metadata?.name}`;
+      const boundPVName = pvc?.spec?.volumeName;
+      const boundPV = (pvList?.items || []).find((pv: any) => pv?.metadata?.name === boundPVName);
+      return {
+        metadata: {
+          name: pvc?.metadata?.name,
+          namespace: pvc?.metadata?.namespace,
+          uid: pvc?.metadata?.uid,
+          creationTimestamp: pvc?.metadata?.creationTimestamp,
+          labels: pvc?.metadata?.labels || {},
+          annotations: pvc?.metadata?.annotations || {},
+        },
+        spec: {
+          storageClassName: pvc?.spec?.storageClassName,
+          accessModes: pvc?.spec?.accessModes,
+          resources: pvc?.spec?.resources,
+          volumeMode: pvc?.spec?.volumeMode,
+          volumeName: boundPVName,
+        },
+        status: {
+          phase: pvc?.status?.phase,
+          capacity: pvc?.status?.capacity,
+          conditions: pvc?.status?.conditions || [],
+        },
+        boundPVStatus: boundPV
+          ? { phase: boundPV?.status?.phase, reason: boundPV?.status?.reason }
+          : undefined,
+        storageClass: csi?.storageClassByPVC?.[key],
+        volumeAttachment: csi?.attachmentByPVC?.[key],
+        pods: podsByPVC[key],
+        events: eventsByPVC?.[key],
+        quota: quotaDiagnostics?.[key],
+      };
+    });
+
+    return {
+      total: items.length,
+      namespace: options.namespace || 'all',
+      analysis,
+      bindingStatus,
+      storageClassSummary: csi?.storageClassSummary,
+      items,
+    };
+  }
+
+  private async getCsiCorrelationForPVs(
+    client: KubernetesClient,
+    pvs: any[],
+  ): Promise<{
+    drivers: any[];
+    attachmentsByPV: Record<string, any[]>;
+    driverPresenceByPV: Record<string, { driver?: string; present: boolean }>;
+    storageClassSummary: Record<string, number>;
+  }> {
+    const [driversResp, attachmentsResp] = await Promise.all([
+      client.storage.listCSIDriver().catch(() => ({ items: [] as any[] })),
+      client.storage.listVolumeAttachment().catch(() => ({ items: [] as any[] })),
+    ]);
+
+    const drivers = driversResp?.items || [];
+    const attachments = attachmentsResp?.items || [];
+
+    const driverNames = new Set(drivers.map((d: any) => d?.metadata?.name));
+
+    const attachmentsByPV: Record<string, any[]> = {};
+    for (const a of attachments) {
+      const pvName = a?.spec?.source?.persistentVolumeName;
+      if (!pvName) continue;
+      attachmentsByPV[pvName] = attachmentsByPV[pvName] || [];
+      attachmentsByPV[pvName].push({
+        name: a?.metadata?.name,
+        nodeName: a?.spec?.nodeName,
+        attachError: a?.status?.attachError,
+        attached: a?.status?.attached,
+        detachError: a?.status?.detachError,
+      });
+    }
+
+    const driverPresenceByPV: Record<string, { driver?: string; present: boolean }> = {};
+    const storageClassSummary: Record<string, number> = {};
+    for (const pv of pvs) {
+      const name = pv?.metadata?.name || '';
+      const scName = pv?.spec?.storageClassName || 'default';
+      storageClassSummary[scName] = (storageClassSummary[scName] || 0) + 1;
+      const driver = pv?.spec?.csi?.driver;
+      driverPresenceByPV[name] = { driver, present: driver ? driverNames.has(driver) : false };
+    }
+
+    return { drivers, attachmentsByPV, driverPresenceByPV, storageClassSummary };
+  }
+
+  private async getCsiCorrelationForPVCs(
+    client: KubernetesClient,
+    pvcs: any[],
+  ): Promise<{
+    storageClassByPVC: Record<string, any>;
+    storageClassSummary: Record<string, number>;
+    attachmentByPVC: Record<string, any | undefined>;
+  }> {
+    const [scsResp, attachmentsResp] = await Promise.all([
+      client.storage.listStorageClass().catch(() => ({ items: [] as any[] })),
+      client.storage.listVolumeAttachment().catch(() => ({ items: [] as any[] })),
+    ]);
+    const scs = scsResp?.items || [];
+    const attachments = attachmentsResp?.items || [];
+
+    const defaultScNames = new Set(
+      scs
+        .filter((sc: any) => {
+          const anns = sc?.metadata?.annotations || {};
+          return (
+            anns['storageclass.kubernetes.io/is-default-class'] === 'true' ||
+            anns['storageclass.beta.kubernetes.io/is-default-class'] === 'true'
+          );
+        })
+        .map((sc: any) => sc?.metadata?.name),
+    );
+
+    const scByName: Record<string, any> = {};
+    for (const sc of scs) scByName[sc?.metadata?.name] = sc;
+
+    const storageClassByPVC: Record<string, any> = {};
+    const storageClassSummary: Record<string, number> = {};
+    const attachmentByPVC: Record<string, any | undefined> = {};
+
+    for (const pvc of pvcs) {
+      const key = `${pvc?.metadata?.namespace}/${pvc?.metadata?.name}`;
+      const scName = pvc?.spec?.storageClassName || Array.from(defaultScNames)[0];
+      const sc = scName ? scByName[scName] : undefined;
+      storageClassByPVC[key] = sc
+        ? {
+            name: sc?.metadata?.name,
+            provisioner: sc?.provisioner,
+            volumeBindingMode: sc?.volumeBindingMode,
+            allowVolumeExpansion: sc?.allowVolumeExpansion,
+          }
+        : undefined;
+      const sumKey = sc?.metadata?.name || 'none';
+      storageClassSummary[sumKey] = (storageClassSummary[sumKey] || 0) + 1;
+
+      const pvName = pvc?.spec?.volumeName;
+      if (pvName) {
+        const attachment = attachments.find(
+          (a: any) => a?.spec?.source?.persistentVolumeName === pvName,
+        );
+        if (attachment) {
+          attachmentByPVC[key] = {
+            name: attachment?.metadata?.name,
+            nodeName: attachment?.spec?.nodeName,
+            attached: attachment?.status?.attached,
+            attachError: attachment?.status?.attachError,
+            detachError: attachment?.status?.detachError,
+          };
+        }
+      }
+    }
+
+    return { storageClassByPVC, storageClassSummary, attachmentByPVC };
+  }
+
+  private async getQuotaDiagnosticsForPVCs(
+    client: KubernetesClient,
+    pvcs: any[],
+    namespace: string,
+  ): Promise<Record<string, any>> {
+    const [quotaResp, limitRangeResp] = await Promise.all([
+      client.core
+        .listNamespacedResourceQuota({ namespace } as any)
+        .catch(() => ({ items: [] as any[] })),
+      client.core
+        .listNamespacedLimitRange({ namespace } as any)
+        .catch(() => ({ items: [] as any[] })),
+    ]);
+    const quotas = quotaResp?.items || [];
+    const limitRanges = limitRangeResp?.items || [];
+
+    const result: Record<string, any> = {};
+    for (const pvc of pvcs) {
+      const key = `${pvc?.metadata?.namespace}/${pvc?.metadata?.name}`;
+      const requested = pvc?.spec?.resources?.requests?.storage as string | undefined;
+      const requestedBytes = this.parseStorageSize(requested || '0');
+
+      const quotaIssues: any[] = [];
+      for (const q of quotas) {
+        const hard = q?.status?.hard || q?.spec?.hard || {};
+        const used = q?.status?.used || {};
+
+        const className = pvc?.spec?.storageClassName;
+        const classKey = className
+          ? `requests.storageclass.storage.k8s.io/${className}`
+          : undefined;
+
+        const hardTotal = this.parseStorageSize((hard['requests.storage'] as string) || '0');
+        const usedTotal = this.parseStorageSize((used['requests.storage'] as string) || '0');
+        const remainingTotal = Math.max(hardTotal - usedTotal, 0);
+        if (hardTotal > 0 && requestedBytes > remainingTotal) {
+          quotaIssues.push({
+            type: 'requests.storage',
+            remaining: remainingTotal,
+            requested: requestedBytes,
+          });
+        }
+
+        if (classKey && hard[classKey]) {
+          const hardClass = this.parseStorageSize((hard[classKey] as string) || '0');
+          const usedClass = this.parseStorageSize((used[classKey] as string) || '0');
+          const remainingClass = Math.max(hardClass - usedClass, 0);
+          if (requestedBytes > remainingClass) {
+            quotaIssues.push({
+              type: classKey,
+              remaining: remainingClass,
+              requested: requestedBytes,
+            });
+          }
+        }
+      }
+
+      const limitIssues: any[] = [];
+      for (const lr of limitRanges) {
+        const items = lr?.spec?.limits || [];
+        for (const item of items) {
+          const min = this.parseStorageSize((item?.min?.storage as string) || '0');
+          const max = this.parseStorageSize((item?.max?.storage as string) || '0');
+          if (min > 0 && requestedBytes > 0 && requestedBytes < min) {
+            limitIssues.push({ type: 'min.storage', required: min, requested: requestedBytes });
+          }
+          if (max > 0 && requestedBytes > max) {
+            limitIssues.push({ type: 'max.storage', limit: max, requested: requestedBytes });
+          }
+        }
+      }
+
+      result[key] = {
+        requestedBytes,
+        quotaIssues,
+        limitIssues,
+      };
+    }
+
+    return result;
+  }
+
+  private async getEventsForObjects(
+    client: KubernetesClient,
+    objects: Array<{ kind: string; name?: string; namespace?: string }>,
+    since?: string,
+  ): Promise<Record<string, any[]>> {
+    const fieldSelectors: string[] = [];
+    const kinds = Array.from(new Set(objects.map((o) => o.kind))).filter(Boolean);
+    if (kinds.length === 1) fieldSelectors.push(`involvedObject.kind=${kinds[0]}`);
+
+    const list = await client.core.listEventForAllNamespaces({
+      fieldSelector: fieldSelectors.length > 0 ? fieldSelectors.join(',') : undefined,
+    } as any);
+    const allEvents: any[] = (list as any)?.items || [];
+
+    const sinceMs = this.parseDurationToMs(since);
+    const cutoff = sinceMs ? Date.now() - sinceMs : undefined;
+
+    const eventsByKey: Record<string, any[]> = {};
+    for (const obj of objects) {
+      const key = obj.namespace ? `${obj.namespace}/${obj.name}` : obj.name || '';
+      const filtered = allEvents
+        .filter((e: any) => {
+          const okKind = !obj.kind || e?.involvedObject?.kind === obj.kind;
+          const okName = !obj.name || e?.involvedObject?.name === obj.name;
+          const okNs = obj.namespace ? e?.metadata?.namespace === obj.namespace : true;
+          if (!okKind || !okName || !okNs) return false;
+          if (!cutoff) return true;
+          const ts = new Date(e?.lastTimestamp || e?.eventTime || e?.firstTimestamp || 0).getTime();
+          return ts >= cutoff;
+        })
+        .map((e: any) => ({
+          namespace: e?.metadata?.namespace,
+          lastTimestamp: e?.lastTimestamp || e?.firstTimestamp,
+          type: e?.type,
+          reason: e?.reason,
+          message: e?.message,
+          count: e?.count,
+        }))
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.lastTimestamp || 0).getTime() - new Date(a.lastTimestamp || 0).getTime(),
+        );
+      eventsByKey[key] = filtered;
+    }
+
+    return eventsByKey;
+  }
+
+  private nodeMatchesSelectorTerms(node: any, terms: any[]): boolean {
+    const labels = node?.metadata?.labels || {};
+    // A node matches if it matches any term, and each term requires all expressions
+    for (const term of terms) {
+      const exprs = term?.matchExpressions || [];
+      let allOk = true;
+      for (const expr of exprs) {
+        const key = expr?.key;
+        const operator = expr?.operator;
+        const values: string[] = expr?.values || [];
+        const nodeVal = labels[key];
+        switch (operator) {
+          case 'In':
+            if (!values.includes(nodeVal)) allOk = false;
+            break;
+          case 'NotIn':
+            if (values.includes(nodeVal)) allOk = false;
+            break;
+          case 'Exists':
+            if (!(key in labels)) allOk = false;
+            break;
+          case 'DoesNotExist':
+            if (key in labels) allOk = false;
+            break;
+          case 'Gt':
+          case 'Lt': {
+            const n = Number(nodeVal);
+            const v = Number(values[0]);
+            if (Number.isNaN(n) || Number.isNaN(v)) {
+              allOk = false;
+            } else if (operator === 'Gt' && !(n > v)) {
+              allOk = false;
+            } else if (operator === 'Lt' && !(n < v)) {
+              allOk = false;
+            }
+            break;
+          }
+          default:
+            break;
+        }
+        if (!allOk) break;
+      }
+      if (allOk) return true;
+    }
+    return false;
+  }
+
+  private parseDurationToMs(value?: string): number | undefined {
+    if (!value || typeof value !== 'string') return undefined;
+    const match = value.trim().match(/^(\d+)([smhdw])$/i);
+    if (!match) return undefined;
+    const num = parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+    const unitMs: Record<string, number> = {
+      s: 1_000,
+      m: 60_000,
+      h: 3_600_000,
+      d: 86_400_000,
+      w: 604_800_000,
+    };
+    return num * (unitMs[unit] || 0);
+  }
+
+  private parseStorageSize(sizeStr: string): number {
+    if (!sizeStr) return 0;
+    const units: { [key: string]: number } = {
+      Ki: 1024,
+      Mi: 1024 * 1024,
+      Gi: 1024 * 1024 * 1024,
+      Ti: 1024 * 1024 * 1024 * 1024,
+      Pi: 1024 * 1024 * 1024 * 1024 * 1024,
+      Ei: 1024 * 1024 * 1024 * 1024 * 1024 * 1024,
+      K: 1000,
+      M: 1000 * 1000,
+      G: 1000 * 1000 * 1000,
+      T: 1000 * 1000 * 1000 * 1000,
+      P: 1000 * 1000 * 1000 * 1000 * 1000,
+      E: 1000 * 1000 * 1000 * 1000 * 1000 * 1000,
+      '': 1,
+    };
+    const match = sizeStr.match(/^(\d+(?:\.\d+)?)\s*([A-Za-z]*)$/);
+    if (!match) return 0;
+    const value = parseFloat(match[1]);
+    const unit = match[2] || '';
+    const multiplier = units[unit] || 1;
+    return Math.floor(value * multiplier);
   }
 
   private async getVersionInfoSafe(client: KubernetesClient): Promise<any | undefined> {
