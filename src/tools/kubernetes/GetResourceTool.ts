@@ -15,25 +15,14 @@ export class GetResourceTool implements BaseTool {
   tool: Tool = {
     name: 'kube_describe',
     description:
-      'Describe a single Kubernetes resource by type and name (supports: [pod, service, deployment, configmap, secret, role, clusterrole, rolebinding, clusterrolebinding]) and perform one-shot diagnostics. Returns structured details with related context (events, related resources) and problem findings.',
+      'Describe a single Kubernetes resource by type and name. Accepts any Kubernetes resource (core, built-in, or CRD) via kind/plural or group/version/resource, with customized analysis for pod, service, deployment, configmap, and secret. Returns structured details with events and diagnostics.',
     inputSchema: {
       type: 'object',
       properties: {
         resourceType: {
           type: 'string',
           description:
-            'Type of resource (pod, service, deployment, configmap, secret, role, clusterrole, rolebinding, clusterrolebinding)',
-          enum: [
-            'pod',
-            'service',
-            'deployment',
-            'configmap',
-            'secret',
-            'role',
-            'clusterrole',
-            'rolebinding',
-            'clusterrolebinding',
-          ],
+            'Resource identifier. Examples: pod|pods, service|services, deployment|deployments, configmap|configmaps, secret|secrets, node|nodes, hpa|horizontalpodautoscaler(s), apps/v1/deployments, networking.k8s.io/v1/ingresses, example.com/v1alpha1/widgets, deployments.apps, replicasets.apps/v1. Case-insensitive.',
         },
         name: CommonSchemas.name,
         namespace: {
@@ -67,7 +56,7 @@ export class GetResourceTool implements BaseTool {
           optional: true,
         },
       },
-      required: ['resourceType', 'name'],
+      required: ['resourceType'],
     },
   };
 
@@ -76,13 +65,20 @@ export class GetResourceTool implements BaseTool {
       const {
         resourceType,
         name,
-        namespace = 'default',
+        namespace = client?.getCurrentNamespace() || 'default',
         skipSanitize,
         includeEvents = true,
         includeDiagnostics = true,
         eventsLimit = 50,
         restartThreshold = 5,
       } = params || {};
+
+      const nameProvided = typeof name === 'string' && name.length > 0;
+
+      if (!nameProvided) {
+        // No name provided: list resources of the given type (plural or kind)
+        return await this.listGenericResource(client, { resourceType, namespace });
+      }
 
       switch (resourceType) {
         case 'pod':
@@ -159,7 +155,14 @@ export class GetResourceTool implements BaseTool {
             eventsLimit,
           });
         default:
-          throw new Error(`Unsupported resource type: ${resourceType}`);
+          return await this.describeGenericResource(client, {
+            resourceType,
+            name,
+            namespace,
+            includeEvents,
+            includeDiagnostics,
+            eventsLimit,
+          });
       }
     } catch (error: any) {
       const errorMessage = error.response?.body?.message || error.message || 'Unknown error';
@@ -320,6 +323,37 @@ export class GetResourceTool implements BaseTool {
       related: { boundBy },
       events,
       diagnostics: { health, findings },
+    };
+  }
+
+  private async listGenericResource(
+    client: KubernetesClient,
+    args: {
+      resourceType: string;
+      namespace?: string;
+    },
+  ): Promise<any> {
+    const desc = await this.resolveApiResource(client, args.resourceType);
+    const base = desc.group ? `/apis/${desc.group}/${desc.version}` : `/api/${desc.version}`;
+    const namespacedPart = desc.namespaced ? `/namespaces/${args.namespace || 'default'}` : '';
+    const listPath = `${base}${namespacedPart}/${desc.plural}`;
+    const list = await client.getRaw<any>(listPath);
+    const items = Array.isArray(list?.items) ? list.items : [];
+    const formattedItems = items.map((it: any) => ({
+      kind: it?.kind,
+      apiVersion: it?.apiVersion,
+      metadata: this.buildMeta(it),
+      spec: it?.spec,
+      status: it?.status,
+    }));
+    return {
+      operation: 'list',
+      resourceType: `${desc.group || 'core'}/${desc.version}/${desc.plural}`,
+      kind: list?.kind || `${desc.kind}List`,
+      apiVersion: list?.apiVersion || (desc.group ? `${desc.group}/${desc.version}` : desc.version),
+      namespace: desc.namespaced ? args.namespace || 'default' : undefined,
+      total: formattedItems.length,
+      items: formattedItems,
     };
   }
 
@@ -514,6 +548,194 @@ export class GetResourceTool implements BaseTool {
       roleRef,
       subjects: (crb as any)?.subjects || [],
       related: { roleExists },
+      events,
+      diagnostics: { health, findings },
+    };
+  }
+
+  private normalizeResourceType(input: string): {
+    group?: string;
+    version?: string;
+    resource?: string;
+  } {
+    const raw = String(input || '').trim();
+    const s = raw.toLowerCase();
+    // Format: group/version/resource
+    const slashParts = s.split('/').filter(Boolean);
+    if (slashParts.length >= 3) {
+      const [group, version, ...rest] = slashParts;
+      const resource = rest.join('/');
+      return { group, version, resource };
+    }
+    // Format: resource.group or resource.group/version
+    if (s.includes('.')) {
+      const [resourcePart, groupAndMaybeVersion] = s.split('.', 2);
+      if (groupAndMaybeVersion.includes('/')) {
+        const [group, version] = groupAndMaybeVersion.split('/', 2);
+        return { group, version, resource: resourcePart };
+      }
+      return { group: groupAndMaybeVersion, resource: resourcePart };
+    }
+    // Format: version/resource (for core group)
+    if (slashParts.length === 2) {
+      const [version, resource] = slashParts;
+      return { version, resource };
+    }
+    // Only resource or kind/shortname
+    return { resource: s };
+  }
+
+  private async resolveApiResource(
+    client: KubernetesClient,
+    resourceType: string,
+  ): Promise<{
+    group: string; // empty string for core
+    version: string;
+    plural: string;
+    namespaced: boolean;
+    kind: string;
+  }> {
+    const parsed = this.normalizeResourceType(resourceType);
+
+    // Helper to check matches against an APIResource entry
+    const matches = (r: any, want: string): boolean => {
+      const w = (want || '').toLowerCase();
+      if (!w) return false;
+      const name = String(r?.name || '').toLowerCase();
+      const singular = String(r?.singularName || '').toLowerCase();
+      const kind = String(r?.kind || '').toLowerCase();
+      const shorts: string[] = Array.isArray(r?.shortNames)
+        ? r.shortNames.map((x: any) => String(x).toLowerCase())
+        : [];
+      if (name.split('/')[0] === w) return true; // ignore subresources
+      if (singular && singular === w) return true;
+      if (kind && kind === w) return true;
+      if (shorts.includes(w)) return true;
+      // crude pluralization: if user provided singular like pod -> pods
+      if (name.endsWith('s') && name.slice(0, -1) === w) return true;
+      if (w.endsWith('s') && w.slice(0, -1) === name) return true;
+      return false;
+    };
+
+    // 1) Try core /api/v1 when group is empty or unspecified
+    const tryCore = parsed.group === undefined || parsed.group === '';
+    if (tryCore) {
+      const coreList = await client.getRaw<any>('/api/v1');
+      const coreResources = (coreList?.resources || []).filter(
+        (r: any) => !String(r?.name || '').includes('/'),
+      );
+      const target = coreResources.find((r: any) => matches(r, parsed.resource!));
+      if (target) {
+        return {
+          group: '',
+          version: 'v1',
+          plural: target.name,
+          namespaced: !!target.namespaced,
+          kind: target.kind,
+        };
+      }
+      // If user provided explicit version like v1/foo, we already tried core
+      if (parsed.version && parsed.version !== 'v1') {
+        // Not core v1, continue to /apis
+      }
+    }
+
+    // 2) Enumerate API groups and versions
+    const groupsList = await client.getRaw<any>('/apis');
+    const groups: any[] = groupsList?.groups || [];
+
+    const groupCandidates = parsed.group
+      ? groups.filter((g: any) => String(g?.name || '').toLowerCase() === parsed.group)
+      : groups;
+
+    for (const g of groupCandidates) {
+      const versions: any[] = g?.versions || [];
+      // Prefer explicit version, then preferredVersion, then iterate
+      const versionNames: string[] = parsed.version
+        ? [parsed.version]
+        : [g?.preferredVersion?.version, ...versions.map((v: any) => v.version)].filter(Boolean);
+
+      const seen = new Set<string>();
+      for (const ver of versionNames) {
+        if (!ver || seen.has(ver)) continue;
+        seen.add(ver);
+        const list = await client.getRaw<any>(`/apis/${g.name}/${ver}`);
+        const resources = (list?.resources || []).filter(
+          (r: any) => !String(r?.name || '').includes('/'),
+        );
+        const target = resources.find((r: any) => matches(r, parsed.resource!));
+        if (target) {
+          return {
+            group: String(g.name),
+            version: String(ver),
+            plural: String(target.name),
+            namespaced: !!target.namespaced,
+            kind: String(target.kind),
+          };
+        }
+      }
+    }
+
+    throw new Error(
+      `Could not resolve resource type '${resourceType}'. Try a fully-qualified form like group/version/resource or plural name.`,
+    );
+  }
+
+  private async describeGenericResource(
+    client: KubernetesClient,
+    args: {
+      resourceType: string;
+      name: string;
+      namespace?: string;
+      includeEvents: boolean;
+      includeDiagnostics: boolean;
+      eventsLimit: number;
+    },
+  ): Promise<any> {
+    const desc = await this.resolveApiResource(client, args.resourceType);
+
+    // Build path
+    const base = desc.group ? `/apis/${desc.group}/${desc.version}` : `/api/${desc.version}`;
+    const namespacedPart = desc.namespaced ? `/namespaces/${args.namespace || 'default'}` : '';
+    const path = `${base}${namespacedPart}/${desc.plural}/${args.name}`;
+
+    const obj = await client.getRaw<any>(path);
+
+    const eventNamespace = desc.namespaced ? args.namespace || 'default' : 'default';
+    const events = args.includeEvents
+      ? await this.fetchEvents(
+          client,
+          obj?.kind || desc.kind,
+          args.name,
+          eventNamespace,
+          args.eventsLimit,
+        )
+      : [];
+
+    const findings: Array<{
+      severity: 'info' | 'warning' | 'critical';
+      reason: string;
+      message: string;
+    }> = [];
+
+    if (args.includeDiagnostics) {
+      for (const e of (events || []).filter((e) => e.type === 'Warning').slice(0, 5)) {
+        findings.push({
+          severity: 'warning',
+          reason: e.reason || 'WarningEvent',
+          message: e.message || 'Warning event',
+        });
+      }
+    }
+
+    const health = this.computeHealth(findings);
+    return {
+      resourceType: `${desc.group || 'core'}/${desc.version}/${desc.plural}`,
+      kind: obj?.kind || desc.kind,
+      apiVersion: obj?.apiVersion || (desc.group ? `${desc.group}/${desc.version}` : desc.version),
+      metadata: this.buildMeta(obj),
+      spec: obj?.spec,
+      status: obj?.status,
       events,
       diagnostics: { health, findings },
     };
