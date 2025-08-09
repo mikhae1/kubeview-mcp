@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-08-09
+
+### Added
+- **CLI Support Detection**: Added optional CLI support detection and improve plugin loading.
+- **Multi-pod Log Streaming**: Added `KubeLogTool` for multi-pod log streaming with event merging.
+- **Storage Diagnostics**: Enhanced `KubernetesClient` and `KubeListTool` with storage diagnostics.
+- **RBAC Support**: Enhanced `KubernetesClient` and tools with RBAC support.
+- **Network Diagnostics**: Added `KubeNetTool` for network diagnostics.
+- **Sensitive Data Masking**: Implement sensitive data masking across outputs.
+- **Exec Tool**: Added `ExecTool` for executing commands in Kubernetes pods.
+- **Port Forward Tool**: Added `PortForwardTool` to Kubernetes tools.
+- **Prometheus Target Discovery**: Enhanced Prometheus target discovery and metrics handling.
+- **onNewConversation Hook**: Implemented `onNewConversation` hook for Kubernetes tools.
+
+### Changed
+- **URL and Timeout Parsing**: Updated `kubeview-mcp` URL and refactor timeout parsing.
+- **Resource Tool Renaming**: Renamed `GetResourceTool` and `KubeListTool` for clarity.
+- **Resource Tool Enhancement**: Enhanced `GetResourceTool` for broader resource support and improved diagnostics.
+- **Helm Tool Streamlining**: Streamlined Helm tools and update CLI commands.
+- **BaseToolsPlugin**: Refactored to introduce `BaseToolsPlugin` to reduce duplication across tool plugins.
+
+### Fixed
+- **Metric Retrieval**: Enhanced metric retrieval with improved proxy handling and fallback mechanisms.
+- **API Call Signatures**: Corrected `CustomObjectsApi` call signatures and return `response.body` from raw metrics requests; improve kubelet summary fallback logging.
+- **ESLint Rules**: Satisfied ESLint rules in `PortForwardTool` (no-empty/no-unused-vars).
+- **Global Timeout Handling**: Implemented global timeout handling for tool commands.
+- **Delay Handling**: Optimized delay handling in `RetryStrategy` for test environments.
+
 ## [1.0.0] - 2024-12-19
 
 ### Added
