@@ -4,53 +4,19 @@
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8+-blue)](https://www.typescriptlang.org/)
 
-**KubeView MCP** is a **read-only Model Context Protocol (MCP) server** that exposes rich, AI-ready operations for Kubernetes clusters. Paired with tools like **Cursor IDE** or Chat-based assistants, it lets you inspect, analyse and debug your cluster through natural-language commands while guaranteeing zero write access.
-
----
-
-## Table of Contents
-
-- [KubeView MCP – Kubernetes Model Context Protocol Server](#kubeview-mcp--kubernetes-model-context-protocol-server)
-  - [Table of Contents](#table-of-contents)
-  - [✨ Features](#-features)
-  - [🚀 Quick Start](#-quick-start)
-    - [Zero-install via npx](#zero-install-via-npx)
-    - [Prerequisites](#prerequisites)
-    - [Installation](#installation)
-    - [Build \& Run](#build--run)
-  - [📟 CLI Reference](#-cli-reference)
-    - [Resource Management](#resource-management)
-    - [Storage \& Persistence](#storage--persistence)
-    - [Monitoring \& Observability](#monitoring--observability)
-    - [Generic Resource Tool](#generic-resource-tool)
-  - [⚙️ Configuration](#️-configuration)
-    - [Environment variables (implemented)](#environment-variables-implemented)
-    - [Kubernetes authentication modes](#kubernetes-authentication-modes)
-    - [Example: configuring via shell](#example-configuring-via-shell)
-  - [🪄 Helm Integration](#-helm-integration)
-    - [Core Operations](#core-operations)
-    - [Configuration \& Values](#configuration--values)
-    - [Helm ↔ Kubernetes Bridge](#helm--kubernetes-bridge)
-      - [Example – list all Helm releases](#example--list-all-helm-releases)
-  - [Argo Integration](#argo-integration)
-  - [ArgoCD Integration](#argocd-integration)
-  - [💡 Usage Examples](#-usage-examples)
-  - [🔒 Sensitive Data Masking](#-sensitive-data-masking)
-  - [🤝 Contributing](#-contributing)
-  - [📄 License](#-license)
-  - [🙏 Acknowledgments](#-acknowledgments)
+KubeView MCP is a read-only Model Context Protocol (MCP) server that exposes AI-friendly tools for safe Kubernetes, Helm, Argo Workflows, and Argo CD introspection. It pairs with Cursor IDE, Claude Desktop, and other MCP clients to let you inspect, diagnose, and debug clusters via natural language—without any write operations.
 
 ---
 
 ## ✨ Features
 
-- **Kubernetes Resources** – Read-only access to Pods, Services, Deployments, Namespaces, ConfigMaps, Secrets, PVCs and more.
-- **Helm Support** – Deep inspection of Helm releases including manifests, values, hooks and history.
-- **Argo & ArgoCD Integration** – Seamlessly interact with Argo Workflows and ArgoCD applications.
-- **Advanced Storage Analysis** – Diagnose PV/PVC issues with smart binding & reclaim-policy checks.
-- **Robust Monitoring** – CPU / memory metrics out-of-the-box, optionally enriched with Prometheus data.
-- **Log Streaming** – Tail or grep container logs directly from your AI assistant.
-- **Cluster Events** – Filter and analyse live Kubernetes events.
+- **Kubernetes tools (read-only)**: list, get/describe, metrics, logs, exec (read-only), port-forward, and in-cluster network diagnostics
+- **Cluster overview**: one-shot, LLM-optimized diagnostics across nodes, workloads, storage, events, and security posture
+- **Helm integration**: list releases; fetch values, manifest, notes, hooks, history, status, and parsed resources
+- **Argo Workflows**: list/get workflows and fetch workflow logs
+- **Argo CD**: list/get app details, resources, history, logs, and status via a single multi-operation tool
+- **Sensitive data masking**: global redaction for secrets/tokens in ConfigMaps, Secrets, and Helm values
+- **Zero write access**: designed to be safe in production from day one
 
 ---
 
@@ -59,17 +25,17 @@
 ### Zero-install via npx
 
 ```bash
-npx https://github.com/mikhae1/kubeview-mcp
+npx -y https://github.com/mikhae1/kubeview-mcp
 ```
 
-_For Cursor IDE or any other MCP-compatible client, add the following entry to your_ `mcp.json` _file (usually located in `~/.cursor/mcp.json`):_
+Add to your MCP client config (for Cursor, `~/.cursor/mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "kubeview-mcp": {
       "command": "npx",
-      "args": ["https://github.com/mikhae1/kubeview-mcp"],
+      "args": ["-y", "https://github.com/mikhae1/kubeview-mcp"],
       "env": {
         "KUBECONFIG": "$HOME/.kube/config"
       }
@@ -80,240 +46,161 @@ _For Cursor IDE or any other MCP-compatible client, add the following entry to y
 
 ### Prerequisites
 
-- **Node.js ≥ 18**
-- **npm** (or **yarn/pnpm**) for dependency management
-- Access to a **Kubernetes cluster** with a valid *kubeconfig*
-- **Cursor IDE** (or another MCP-compatible client) for interactive use
+- Node.js ≥ 18
+- Access to a Kubernetes cluster (kubeconfig)
+- Optional CLIs on PATH when using those plugins: `helm`, `argo`, `argocd`
 
-### Installation
-
-```bash
-# Clone the repository
-$ git clone https://github.com/mikhae1/kubeview-mcp.git
-$ cd kubeview-mcp
-
-# Install dependencies
-$ npm install
-
-# Generate local configuration for Cursor IDE & Claude
-$ npm run setup
-```
-
-### Build & Run
+### Local install
 
 ```bash
-# Compile TypeScript → JavaScript
-$ npm run build
+git clone https://github.com/mikhae1/kubeview-mcp.git
+cd kubeview-mcp
+npm install
 
-# Start the MCP server
-$ npm start
+# Generate local MCP config entries for Cursor and/or Claude Desktop
+npm run setup
 ```
 
-The server will automatically locate your *kubeconfig* and use the current k8s context for all operations.
+### Run
+
+```bash
+# Build and start
+npm run build
+npm start
+
+# Or use the bundled binary wrapper
+kubeview-mcp serve
+```
 
 ---
 
-## 📟 CLI Reference
+## 📟 Tool Index (CLI)
 
-All commands are invoked through the project-local helper:
+Invoke tools with the helper:
 
 ```bash
-npm run command -- <tool_name> [tool options]
+npm run command -- <tool_name> [--param=value ...]
 ```
 
-### Resource Management
+### Kubernetes
 
-| Tool             | Description                                               |
-| ---------------- | --------------------------------------------------------- |
-| `get_pods`       | List / filter pods with detailed phase & container state |
-| `get_services`   | Discover services and their exposed endpoints            |
-| `get_deployments`| Inspect deployment rollout status & spec                |
-| `get_ingresses`  | View ingresses and their routing rules                    |
-| `get_configmaps` | View ConfigMaps (with sensitive data automatically redacted) |
-| `get_secrets`    | Read-only secret inspector with built-in sanitisation    |
-| `get_namespaces` | Enumerate namespaces in the cluster                      |
+- **kube_list**: List resources or, when no `resourceType` is provided, return a cluster diagnostics overview
+  - Params: `resourceType`, `namespace`, `labelSelector`, `fieldSelector`
+  - Supported `resourceType` for listing: `pod`, `service`, `deployment`, `node`, `namespace`, `persistentvolume`, `persistentvolumeclaim`, `secret`, `configmap`, `role`, `clusterrole`, `rolebinding`, `clusterrolebinding`
+- **kube_get**: Describe a single resource or list a type using plural, kind, shortname, or fully-qualified `group/version/resource`
+  - Params: `resourceType` (required), `name`, `namespace`, `includeEvents`, `includeDiagnostics`, `eventsLimit`, `restartThreshold`, `skipSanitize` (for ConfigMaps)
+- **kube_metrics**: Node and pod CPU/memory metrics, optional Prometheus enrichment and diagnostics
+  - Params: `scope` (`all|nodes|pods`), `namespace`, `podName`, `includeSummary`, `diagnostics`, `prometheusQueries[]`, `fetchPodSpecs`, thresholds (`topN`, `cpuSaturationThreshold`, `memorySaturationThreshold`, `podRestartThreshold`, `podLimitPressureThreshold`)
+- **kube_logs**: Pod/container logs (like `kubectl logs`)
+  - Params: `podName` (required), `namespace`, `container`, `tailLines`, `since`, `previous`, `timestamps`
+- **kube_exec**: Execute a command in a container via Kubernetes API only; returns stdout/stderr
+  - Params: `podName` (required), `namespace`, `container`, `args[]` | `argv` | `command`, `stdin`, `tty`, `timeoutSeconds`, `shell`
+- **kube_port**: Temporary port-forward to a pod or service (auto-terminates)
+  - Params: `namespace`, `podName` | `serviceName`, `remotePort` (required), `localPort`, `address`, `timeoutSeconds`, `readinessTimeoutSeconds`
+- **kube_net**: In-pod network diagnostics (DNS resolution, internet egress, pod/service connectivity)
+  - Params: `sourcePod` (required), `namespace`, `container`, `targetPod`, `targetPodNamespace`, `targetService`, `targetServiceNamespace`, `targetPort`, `externalHost`, `externalPort`, `dnsNames[]`, toggles: `runDnsTest`, `runInternetTest`, `runPodConnectivityTest`, `runServiceConnectivityTest`, `timeoutSeconds`
 
-### Storage & Persistence
+### Helm
 
-| Tool                           | Description                                                  |
-| ------------------------------ | ------------------------------------------------------------ |
-| `get_persistent_volumes`       | Analyse PVs and detect reclaim / capacity issues            |
-| `get_persistent_volume_claims` | Inspect PVC binding, access modes & storage-class details   |
+- **helm_list**: List Helm releases
+  - Params: `namespace`, `allNamespaces`, `outputFormat`, `selector`, `maxReleases`, `deployed`, `failed`, `pending`, `superseded`, `uninstalled`, `uninstalling`
+- **helm_get**: Get release data
+  - Params: `what` (`values|manifest|notes|hooks|resources|status|history`), `releaseName` (required), `namespace`, `revision`, `outputFormat`, `allValues`, `resourceType`, `showResources`
 
-### Monitoring & Observability
+### Argo Workflows
 
-| Tool            | Description                                                   |
-| --------------- | ------------------------------------------------------------- |
-| `get_metrics`   | Cluster-wide CPU & memory metrics (Prometheus optional)      |
-| `get_pod_metrics` | Fine-grained metrics for individual pods                     |
-| `get_events`    | Stream or filter recent cluster events                       |
-| `pod_logs`      | Tail container logs with regex / since-time filters          |
+- **argo_list**: List workflows with rich filters
+  - Params: `namespace`, `allNamespaces`, `outputFormat`, `selector`, status flags (`running|succeeded|failed|pending|completed|status`), `since`, `chunked`, `maxWorkflows`
+- **argo_get**: Get workflow details
+  - Params: `workflowName` (required), `namespace`, `outputFormat`, `showParameters`, `showArtifacts`, `showEvents`, `nodeFieldSelector`
+- **argo_logs**: Get workflow logs
+  - Params: `workflowName` (required), `namespace`, `container`, `follow`, `previous`, `since`, `sinceTime`, `tail`, `timestamps`, `grep`, `noColor`
 
-### Generic Resource Tool
+### Argo CD
 
-| Tool           | Description                               |
-| -------------- | ----------------------------------------- |
-| `get_resource` | Inspect any Kubernetes resource by GVR    |
+- **argocd_app**: Multi-operation tool for Argo CD apps
+  - Params: `operation` (`list|get|resources|logs|history|status`) plus operation-specific flags (`appName`, `outputFormat`, `selector`, `project`, `cluster`, `namespace`, `repo`, `health`, `sync`, `server`, `grpcWeb`, `plaintext`, `insecure`, `refresh`, `hardRefresh`, `group`, `kind`, `name`, `container`, `follow`, `previous`, `since`, `sinceTime`, `tail`, `timestamps`)
 
 ---
 
 ## ⚙️ Configuration
 
-KubeView MCP is configured primarily via environment variables provided by your MCP client (for example in `mcp.json`) or your shell. Below are all supported options discovered in the codebase today, plus a few proposed options that would be useful to add.
+Provide env vars via your MCP client config or shell.
 
-### Environment variables (implemented)
+- **KUBECONFIG**: Path to kubeconfig (default: `$HOME/.kube/config`)
+- **LOG_LEVEL**: `error|warn|info|debug` (server logs also write to `kubeview-mcp.log`)
+- **TIMEOUT**: Global per-tool timeout in ms (applies to all tools)
+- CLI timeouts: **HELM_TIMEOUT**, **ARGO_TIMEOUT**, **ARGOCD_TIMEOUT** (ms)
+- CLI executable overrides: **HELM_PATH**, **ARGO_PATH**, **ARGOCD_PATH**
+- Plugin toggles: **DISABLE_KUBERNETES_PLUGIN**, **DISABLE_HELM_PLUGIN**, **DISABLE_ARGO_PLUGIN**, **DISABLE_ARGOCD_PLUGIN** (`true|1` to disable)
+- Kubernetes options: **KUBE_CONTEXT**, **K8S_SKIP_TLS_VERIFY** (`true|1`)
 
-- **KUBECONFIG**: Path to your kubeconfig. Supports multiple paths separated by `:`; the first existing file is used. Defaults to `$HOME/.kube/config` if unset.
-  - Example in `mcp.json`:
-    ```json
-    {
-      "mcpServers": {
-        "kubeview-mcp": {
-          "command": "npx",
-          "args": ["https://github.com/mikhae1/kubeview-mcp"],
-          "env": {
-            "KUBECONFIG": "$HOME/.kube/config"
-          }
-        }
+Example (Cursor `mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "kubeview-mcp": {
+      "command": "npx",
+      "args": ["-y", "https://github.com/mikhae1/kubeview-mcp"],
+      "env": {
+        "KUBECONFIG": "$HOME/.kube/config",
+        "LOG_LEVEL": "info",
+        "HELM_TIMEOUT": "45000",
+        "DISABLE_ARGO_PLUGIN": "1"
       }
     }
-    ```
-
-- **LOG_LEVEL**: Controls logging verbosity for the server and plugins. If unset, defaults to `info` for the server and disables extra plugin logging.
-  - Valid values: `error`, `warn`, `info`, `debug`.
-  - When set to `debug`, extra diagnostic output is emitted by certain CLI wrappers.
-  - The server writes logs to stderr/console and to `kubeview-mcp.log` in the working directory.
-
-- **TIMEOUT**: Global timeout in milliseconds
-- **HELM_TIMEOUT**: Timeout in milliseconds for `helm` CLI invocations. Default: `30000`.
-- **ARGO_TIMEOUT**: Timeout in milliseconds for `argo` CLI invocations. Default: `30000`.
-- **ARGOCD_TIMEOUT**: Timeout in milliseconds for `argocd` CLI invocations. Default: `30000`.
-
-- **DISABLE_KUBERNETES_PLUGIN**: Disable the Kubernetes tools plugin entirely. Values: `"true"` or `"1"` to disable.
-- **DISABLE_HELM_PLUGIN**: Disable the Helm tools plugin. Values: `"true"` or `"1"` to disable.
-- **DISABLE_ARGO_PLUGIN**: Disable the Argo tools plugin. Values: `"true"` or `"1"` to disable.
-- **DISABLE_ARGOCD_PLUGIN**: Disable the ArgoCD tools plugin. Values: `"true"` or `"1"` to disable.
-
-Notes:
-- Helm/Argo/ArgoCD tools depend on their respective CLIs being available on your `PATH`. The project will also check common install paths (e.g., `/opt/homebrew/bin/helm`) if not found on `PATH` and provide a helpful error if missing.
-
-### Kubernetes authentication modes
-
-The underlying client supports multiple auth modes, though by default the MCP server uses your kubeconfig:
-
-- **Kubeconfig (default)**: Uses `KUBECONFIG` or `$HOME/.kube/config`, and the current context in that file.
-- **In-cluster**: Supported by the core client. Not wired to an env var yet in the server entrypoint.
-- **Bearer token**: Supported by the core client (`apiServerUrl`, `bearerToken`, optional `skipTlsVerify`). Not wired to env vars yet in the server entrypoint.
-- **KUBE_CONTEXT**: Force a specific kubeconfig context (instead of the current context) for Kubernetes tools.
-- **K8S_SKIP_TLS_VERIFY**: `true`/`1` to skip TLS verification when using token-based auth.
-- **HELM_PATH / ARGO_PATH / ARGOCD_PATH / KUBECTL_PATH**: Override autodetected CLI executable paths for Helm, Argo, ArgoCD, and kubectl.
-
-If you embed KubeView MCP as a library, you can construct `KubernetesClient` with these options directly.
-
-### Example: configuring via shell
-
-```bash
-export KUBECONFIG=$HOME/.kube/config
-export LOG_LEVEL=info
-export HELM_TIMEOUT=45000
-export ARGO_TIMEOUT=45000
-export ARGOCD_TIMEOUT=60000
-
-# Optionally disable plugins you don't use
-export DISABLE_ARGO_PLUGIN=1
-export DISABLE_ARGOCD_PLUGIN=true
+  }
+}
 ```
-
----
-
-## 🪄 Helm Integration
-
-KubeView MCP ships with a dedicated **HelmToolsPlugin** bringing first-class Helm introspection.
-
-### Core Operations
-
-| Tool         | Description                                                |
-| ------------ | ---------------------------------------------------------- |
-| `helm_list`  | List releases across all namespaces with status & revision |
-| `helm_status`| Full release status (history, manifest, values)            |
-| `helm_history`| Complete upgrade / rollback history                        |
-
-### Configuration & Values
-
-| Tool               | Description                                   |
-| ------------------ | --------------------------------------------- |
-| `helm_get_values`  | Rendered values.yaml for a release            |
-| `helm_get_manifest`| Complete aggregated Kubernetes manifest       |
-| `helm_get_notes`   | Chart installation notes & post-deploy hints  |
-| `helm_get_hooks`   | Pre / post hooks configured by the chart      |
-
-### Helm ↔ Kubernetes Bridge
-
-| Tool                       | Description                                                         |
-| -------------------------- | ------------------------------------------------------------------- |
-| `helm_get_resources`       | Discover / categorise all resources created by a release            |
-| `helm_list_with_resources` | Enhanced `helm_list` that bundles the above analysis for each release |
-
-#### Example – list all Helm releases
-
-```bash
-npm run command -- helm_list
-```
-
----
-##  Argo Integration
-
-The **ArgoToolsPlugin** provides tools for interacting with Argo Workflows.
-
-| Tool | Description |
-| --- | --- |
-| `argo_get`  | Get details about a workflow
-| `argo_list` | List all Argo Workflows |
-| `argo_logs` | Get logs from an Argo Workflow |
-| `argo_cron_list` | List all Argo Cron Workflows |
-
-## ArgoCD Integration
-
-The **ArgoCDToolsPlugin** provides tools for interacting with ArgoCD.
-
-| Tool | Description |
-| --- | --- |
-| `argocd_app_list` | List all ArgoCD applications |
-| `argocd_app_get` | Get a specific ArgoCD application |
-| `argocd_app_history` | Get the history of an ArgoCD application |
-| `argocd_app_logs` | Get the logs of an ArgoCD application |
-| `argocd_app_resources` | Get the resources of an ArgoCD application |
-
----
-
-## 💡 Usage Examples
-
-Ask your assistant:
-
-> *“Show me the details of the **nginx** deployment in the **web** namespace.”*
-
-KubeView MCP will execute `get_resource` under the hood and return a structured JSON response that your assistant converts into a readable answer.
-
-> *“List all pods in the **default** namespace and show their CPU and memory usage.”*
-
-This will trigger the `get_pods` and `get_pod_metrics` tools, combining their output to provide a comprehensive view of your pods' resource consumption.
 
 ---
 
 ## 🔒 Sensitive Data Masking
 
-KubeView MCP supports a global masking mode to prevent accidental disclosure of secrets in outputs (enabled by default).
+Global masking prevents accidental disclosure of secrets (enabled when any of the flags below are set):
 
-- Enable global masking: set one of the following to true/1/yes/on
-  - `MCP_HIDE_SENSITIVE`
-  - `HIDE_SENSITIVE_DATA`
-  - `MASK_SENSITIVE_DATA`
-- Customize the mask text: `SENSITIVE_MASK` (default: `*** FILTERED ***`)
+- Enable: `MCP_HIDE_SENSITIVE` or `HIDE_SENSITIVE_DATA` or `MASK_SENSITIVE_DATA` → `true|1|yes|on`
+- Mask text override: `SENSITIVE_MASK` (default: `*** FILTERED ***`)
 
-Effects when masking is enabled:
-- ConfigMaps: Values are sanitized by pattern; enabling global masking ensures redaction even if a caller passes `skipSanitize=true`.
-- Secrets: When listing secrets, all `data`/`stringData` values are fully masked; when describing a single secret we only return key names (no values).
-- Helm values: `helm_get_values` and `helm_get` with `what=values` redact sensitive keys/tokens in the returned text.
+Effects:
+
+- ConfigMaps: values redacted by key/value heuristics; forcing `skipSanitize=true` on `kube_get` will still be overridden by global masking
+- Secrets: list/describe returns only key names; values are masked
+- Helm: `helm_get` with `what=values` applies masking on returned text
+
+---
+
+## 💡 Examples
+
+```bash
+# Cluster diagnostics overview (no resourceType)
+npm run command -- kube_list
+
+# Pods in a namespace
+npm run command -- kube_list --resourceType=pod --namespace=default
+
+# Describe a deployment with events and diagnostics
+npm run command -- kube_get --resourceType=deployment --name=web --namespace=prod
+
+# Metrics summary with diagnostics
+npm run command -- kube_metrics --includeSummary=true --diagnostics=true
+
+# Logs from a pod (last 200 lines)
+npm run command -- kube_logs --podName=nginx-123 --namespace=default --tailLines=200
+
+# Port-forward service 80 -> local 8080 for 90s
+npm run command -- kube_port --serviceName=my-svc --namespace=default --remotePort=80 --localPort=8080 --timeoutSeconds=90
+
+# Network diagnostics from a pod
+npm run command -- kube_net --sourcePod=api-0 --namespace=prod --targetService=db --runServiceConnectivityTest=true
+
+# Helm release values (masked)
+npm run command -- helm_get --what=values --releaseName=my-release --namespace=default --allValues=true
+
+# Argo CD app resources
+npm run command -- argocd_app --operation=resources --appName=my-app --outputFormat=json
+```
 
 ---
 
@@ -321,23 +208,23 @@ Effects when masking is enabled:
 
 1. Fork the repo
 2. Create a feature branch: `git checkout -b feat/my-awesome-feature`
-3. Commit your changes: `git commit -m "feat: add my awesome feature"`
-4. Push to GitHub: `git push origin feat/my-awesome-feature`
-5. Open a Pull Request – thank you!
+3. Commit: `git commit -m "feat: add my awesome feature"`
+4. Push: `git push origin feat/my-awesome-feature`
+5. Open a Pull Request
 
-> 💡 Run `npm run lint` and `npm run test` before opening a PR.
+Tip: run `npm run lint` and `npm run test` locally before submitting.
 
 ---
 
 ## 📄 License
 
-This project is released under the MIT License – see [LICENSE](LICENSE).
+MIT – see `LICENSE`.
 
 ---
 
 ## 🙏 Acknowledgments
 
-- [Model Context Protocol SDK](https://github.com/modelcontextprotocol/sdk)
-- [Kubernetes JavaScript Client](https://github.com/kubernetes-client/javascript)
-- [Winston](https://github.com/winstonjs/winston)
-- [TypeScript](https://www.typescriptlang.org/)
+- Model Context Protocol SDK
+- Kubernetes JavaScript Client
+- Winston
+- TypeScript
