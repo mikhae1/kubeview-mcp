@@ -70,6 +70,8 @@ export class KubernetesClient {
   private autoscalingV2Api!: k8s.AutoscalingV2Api;
   private policyV1Api!: k8s.PolicyV1Api;
   private discoveryV1Api!: k8s.DiscoveryV1Api;
+  private rbacAuthorizationV1Api!: k8s.RbacAuthorizationV1Api;
+  private authorizationV1Api!: k8s.AuthorizationV1Api;
   private authMethod: AuthMethod;
   private logger?: Logger;
   private _resources: ResourceOperations;
@@ -229,6 +231,9 @@ export class KubernetesClient {
     this.autoscalingV2Api = this.kc.makeApiClient(k8s.AutoscalingV2Api);
     this.policyV1Api = this.kc.makeApiClient(k8s.PolicyV1Api);
     this.discoveryV1Api = this.kc.makeApiClient(k8s.DiscoveryV1Api);
+    // RBAC and Authorization APIs
+    this.rbacAuthorizationV1Api = this.kc.makeApiClient(k8s.RbacAuthorizationV1Api);
+    this.authorizationV1Api = this.kc.makeApiClient(k8s.AuthorizationV1Api);
   }
 
   /**
@@ -427,6 +432,14 @@ export class KubernetesClient {
 
   public get discovery(): k8s.DiscoveryV1Api {
     return this.discoveryV1Api;
+  }
+
+  public get rbac(): k8s.RbacAuthorizationV1Api {
+    return this.rbacAuthorizationV1Api;
+  }
+
+  public get authorization(): k8s.AuthorizationV1Api {
+    return this.authorizationV1Api;
   }
 
   /**

@@ -30,6 +30,10 @@ export class KubeListTool implements BaseTool {
             'service',
             'deployment',
             'node',
+            'role',
+            'clusterrole',
+            'rolebinding',
+            'clusterrolebinding',
             'replicaset',
             'statefulset',
             'daemonset',
@@ -100,6 +104,52 @@ export class KubeListTool implements BaseTool {
         // Use core API directly for nodes
         const nodes = await client.core.listNode();
         return nodes?.items ?? [];
+      }
+      case 'role': {
+        // Namespaced resource
+        if (namespace) {
+          const res = await client.rbac.listNamespacedRole({
+            namespace,
+            labelSelector,
+            fieldSelector,
+          } as any);
+          return (res as any)?.items ?? [];
+        }
+        const res = await client.rbac.listRoleForAllNamespaces({
+          labelSelector,
+          fieldSelector,
+        } as any);
+        return (res as any)?.items ?? [];
+      }
+      case 'clusterrole': {
+        const res = await client.rbac.listClusterRole({
+          labelSelector,
+          fieldSelector,
+        } as any);
+        return (res as any)?.items ?? [];
+      }
+      case 'rolebinding': {
+        // Namespaced resource
+        if (namespace) {
+          const res = await client.rbac.listNamespacedRoleBinding({
+            namespace,
+            labelSelector,
+            fieldSelector,
+          } as any);
+          return (res as any)?.items ?? [];
+        }
+        const res = await client.rbac.listRoleBindingForAllNamespaces({
+          labelSelector,
+          fieldSelector,
+        } as any);
+        return (res as any)?.items ?? [];
+      }
+      case 'clusterrolebinding': {
+        const res = await client.rbac.listClusterRoleBinding({
+          labelSelector,
+          fieldSelector,
+        } as any);
+        return (res as any)?.items ?? [];
       }
       // Not yet consolidated to operations; throw clear error for now
       case 'replicaset':

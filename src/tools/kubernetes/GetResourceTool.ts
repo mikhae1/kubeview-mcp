@@ -15,14 +15,25 @@ export class GetResourceTool implements BaseTool {
   tool: Tool = {
     name: 'kube_describe',
     description:
-      'Describe a single Kubernetes resource by type and name (supports: [pod, service, deployment, configmap, secret]) and perform one-shot diagnostics. Returns structured details with related context (events, related resources) and problem findings.',
+      'Describe a single Kubernetes resource by type and name (supports: [pod, service, deployment, configmap, secret, role, clusterrole, rolebinding, clusterrolebinding]) and perform one-shot diagnostics. Returns structured details with related context (events, related resources) and problem findings.',
     inputSchema: {
       type: 'object',
       properties: {
         resourceType: {
           type: 'string',
-          description: 'Type of resource (pod, service, deployment, configmap, secret)',
-          enum: ['pod', 'service', 'deployment', 'configmap', 'secret'],
+          description:
+            'Type of resource (pod, service, deployment, configmap, secret, role, clusterrole, rolebinding, clusterrolebinding)',
+          enum: [
+            'pod',
+            'service',
+            'deployment',
+            'configmap',
+            'secret',
+            'role',
+            'clusterrole',
+            'rolebinding',
+            'clusterrolebinding',
+          ],
         },
         name: CommonSchemas.name,
         namespace: {
@@ -117,6 +128,36 @@ export class GetResourceTool implements BaseTool {
             includeDiagnostics,
             eventsLimit,
           });
+        case 'role':
+          return await this.describeRole(client, {
+            name,
+            namespace,
+            includeEvents,
+            includeDiagnostics,
+            eventsLimit,
+          });
+        case 'clusterrole':
+          return await this.describeClusterRole(client, {
+            name,
+            includeEvents,
+            includeDiagnostics,
+            eventsLimit,
+          });
+        case 'rolebinding':
+          return await this.describeRoleBinding(client, {
+            name,
+            namespace,
+            includeEvents,
+            includeDiagnostics,
+            eventsLimit,
+          });
+        case 'clusterrolebinding':
+          return await this.describeClusterRoleBinding(client, {
+            name,
+            includeEvents,
+            includeDiagnostics,
+            eventsLimit,
+          });
         default:
           throw new Error(`Unsupported resource type: ${resourceType}`);
       }
@@ -125,8 +166,6 @@ export class GetResourceTool implements BaseTool {
       throw new Error(`Failed to get resource details: ${errorMessage}`);
     }
   }
-
-  // (old getConfigMapDetails removed; superseded by describeConfigMap)
 
   // ---------- Helpers ----------
   private parseCpuToCores(cpu?: string): number | undefined {
@@ -207,6 +246,278 @@ export class GetResourceTool implements BaseTool {
   }
 
   // ---------- Describers ----------
+  private buildMeta(resource: any): any {
+    return {
+      name: resource?.metadata?.name,
+      namespace: resource?.metadata?.namespace,
+      uid: resource?.metadata?.uid,
+      resourceVersion: resource?.metadata?.resourceVersion,
+      generation: resource?.metadata?.generation,
+      creationTimestamp: resource?.metadata?.creationTimestamp,
+      labels: resource?.metadata?.labels || {},
+      annotations: resource?.metadata?.annotations || {},
+    };
+  }
+
+  private async describeRole(
+    client: KubernetesClient,
+    args: {
+      name: string;
+      namespace: string;
+      includeEvents: boolean;
+      includeDiagnostics: boolean;
+      eventsLimit: number;
+    },
+  ): Promise<any> {
+    const role = await client.rbac.readNamespacedRole({
+      name: args.name,
+      namespace: args.namespace,
+    });
+
+    // Related: RoleBindings that reference this Role in the same namespace
+    let boundBy: Array<{ name: string; namespace: string; subjects: any[] }> = [];
+    try {
+      const rbs = await client.rbac.listNamespacedRoleBinding({ namespace: args.namespace });
+      const items = ((rbs as any)?.items || []) as any[];
+      boundBy = items
+        .filter((rb) => rb?.roleRef?.kind === 'Role' && rb?.roleRef?.name === args.name)
+        .map((rb) => ({
+          name: rb?.metadata?.name,
+          namespace: rb?.metadata?.namespace,
+          subjects: rb?.subjects || [],
+        }));
+    } catch {
+      // ignore
+    }
+
+    const events = args.includeEvents
+      ? await this.fetchEvents(client, 'Role', args.name, args.namespace, args.eventsLimit)
+      : [];
+
+    const findings: Array<{
+      severity: 'info' | 'warning' | 'critical';
+      reason: string;
+      message: string;
+    }> = [];
+    if (args.includeDiagnostics) {
+      const rules = (role as any)?.rules || [];
+      const hasWildcardVerbs = rules.some((r: any) => (r.verbs || []).includes('*'));
+      const hasWildcardResources = rules.some((r: any) => (r.resources || []).includes('*'));
+      if (hasWildcardVerbs || hasWildcardResources) {
+        findings.push({
+          severity: 'warning',
+          reason: 'BroadPermissions',
+          message: 'Role uses wildcard verbs or resources',
+        });
+      }
+    }
+
+    const health = this.computeHealth(findings);
+    return {
+      resourceType: 'role',
+      metadata: this.buildMeta(role),
+      rules: (role as any)?.rules || [],
+      related: { boundBy },
+      events,
+      diagnostics: { health, findings },
+    };
+  }
+
+  private async describeClusterRole(
+    client: KubernetesClient,
+    args: {
+      name: string;
+      includeEvents: boolean;
+      includeDiagnostics: boolean;
+      eventsLimit: number;
+    },
+  ): Promise<any> {
+    const cr = await client.rbac.readClusterRole({ name: args.name });
+
+    // Related: ClusterRoleBindings and RoleBindings that reference this ClusterRole
+    let boundByCluster: Array<{ name: string; subjects: any[] }> = [];
+    let boundByNamespaced: Array<{ name: string; namespace: string; subjects: any[] }> = [];
+    try {
+      const crbs = await client.rbac.listClusterRoleBinding({});
+      boundByCluster = (((crbs as any)?.items || []) as any[])
+        .filter((crb) => crb?.roleRef?.kind === 'ClusterRole' && crb?.roleRef?.name === args.name)
+        .map((crb) => ({ name: crb?.metadata?.name, subjects: crb?.subjects || [] }));
+    } catch {
+      // ignore
+    }
+    try {
+      const rbs = await client.rbac.listRoleBindingForAllNamespaces({});
+      boundByNamespaced = (((rbs as any)?.items || []) as any[])
+        .filter((rb) => rb?.roleRef?.kind === 'ClusterRole' && rb?.roleRef?.name === args.name)
+        .map((rb) => ({
+          name: rb?.metadata?.name,
+          namespace: rb?.metadata?.namespace,
+          subjects: rb?.subjects || [],
+        }));
+    } catch {
+      // ignore
+    }
+
+    const events = args.includeEvents
+      ? await this.fetchEvents(client, 'ClusterRole', args.name, 'default', args.eventsLimit)
+      : [];
+
+    const findings: Array<{
+      severity: 'info' | 'warning' | 'critical';
+      reason: string;
+      message: string;
+    }> = [];
+    if (args.includeDiagnostics) {
+      const rules = (cr as any)?.rules || [];
+      const hasWildcardVerbs = rules.some((r: any) => (r.verbs || []).includes('*'));
+      const hasWildcardResources = rules.some((r: any) => (r.resources || []).includes('*'));
+      if (hasWildcardVerbs || hasWildcardResources) {
+        findings.push({
+          severity: 'warning',
+          reason: 'BroadPermissions',
+          message: 'ClusterRole uses wildcard verbs or resources',
+        });
+      }
+    }
+
+    const health = this.computeHealth(findings);
+    return {
+      resourceType: 'clusterrole',
+      metadata: this.buildMeta(cr),
+      rules: (cr as any)?.rules || [],
+      related: { boundByCluster, boundByNamespaced },
+      events,
+      diagnostics: { health, findings },
+    };
+  }
+
+  private async describeRoleBinding(
+    client: KubernetesClient,
+    args: {
+      name: string;
+      namespace: string;
+      includeEvents: boolean;
+      includeDiagnostics: boolean;
+      eventsLimit: number;
+    },
+  ): Promise<any> {
+    const rb = await client.rbac.readNamespacedRoleBinding({
+      name: args.name,
+      namespace: args.namespace,
+    });
+
+    // Resolve referenced role (existence check)
+    const roleRef = (rb as any)?.roleRef || {};
+    let roleExists: boolean | undefined = undefined;
+    try {
+      if (roleRef.kind === 'Role') {
+        await client.rbac.readNamespacedRole({ name: roleRef.name, namespace: args.namespace });
+        roleExists = true;
+      } else if (roleRef.kind === 'ClusterRole') {
+        await client.rbac.readClusterRole({ name: roleRef.name });
+        roleExists = true;
+      }
+    } catch {
+      roleExists = false;
+    }
+
+    const events = args.includeEvents
+      ? await this.fetchEvents(client, 'RoleBinding', args.name, args.namespace, args.eventsLimit)
+      : [];
+
+    const findings: Array<{
+      severity: 'info' | 'warning' | 'critical';
+      reason: string;
+      message: string;
+    }> = [];
+    if (args.includeDiagnostics) {
+      if ((rb as any)?.subjects?.length === 0) {
+        findings.push({
+          severity: 'warning',
+          reason: 'NoSubjects',
+          message: 'RoleBinding has no subjects',
+        });
+      }
+      if (roleExists === false) {
+        findings.push({
+          severity: 'critical',
+          reason: 'MissingReferencedRole',
+          message: `${roleRef.kind} '${roleRef.name}' not found`,
+        });
+      }
+    }
+
+    const health = this.computeHealth(findings);
+    return {
+      resourceType: 'rolebinding',
+      metadata: this.buildMeta(rb),
+      roleRef,
+      subjects: (rb as any)?.subjects || [],
+      related: { roleExists },
+      events,
+      diagnostics: { health, findings },
+    };
+  }
+
+  private async describeClusterRoleBinding(
+    client: KubernetesClient,
+    args: {
+      name: string;
+      includeEvents: boolean;
+      includeDiagnostics: boolean;
+      eventsLimit: number;
+    },
+  ): Promise<any> {
+    const crb = await client.rbac.readClusterRoleBinding({ name: args.name });
+
+    const roleRef = (crb as any)?.roleRef || {};
+    let roleExists: boolean | undefined = undefined;
+    try {
+      if (roleRef.kind === 'ClusterRole') {
+        await client.rbac.readClusterRole({ name: roleRef.name });
+        roleExists = true;
+      }
+    } catch {
+      roleExists = false;
+    }
+
+    const events = args.includeEvents
+      ? await this.fetchEvents(client, 'ClusterRoleBinding', args.name, 'default', args.eventsLimit)
+      : [];
+
+    const findings: Array<{
+      severity: 'info' | 'warning' | 'critical';
+      reason: string;
+      message: string;
+    }> = [];
+    if (args.includeDiagnostics) {
+      if ((crb as any)?.subjects?.length === 0) {
+        findings.push({
+          severity: 'warning',
+          reason: 'NoSubjects',
+          message: 'ClusterRoleBinding has no subjects',
+        });
+      }
+      if (roleExists === false) {
+        findings.push({
+          severity: 'critical',
+          reason: 'MissingReferencedClusterRole',
+          message: `ClusterRole '${roleRef.name}' not found`,
+        });
+      }
+    }
+
+    const health = this.computeHealth(findings);
+    return {
+      resourceType: 'clusterrolebinding',
+      metadata: this.buildMeta(crb),
+      roleRef,
+      subjects: (crb as any)?.subjects || [],
+      related: { roleExists },
+      events,
+      diagnostics: { health, findings },
+    };
+  }
   private async describePod(
     client: KubernetesClient,
     args: {
