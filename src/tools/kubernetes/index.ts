@@ -7,3 +7,4 @@ export { GetContainerLogsTool } from './GetContainerLogsTool.js';
 export { PortForwardTool } from './PortForwardTool.js';
 export { ExecTool } from './ExecTool.js';
 export { KubeNetTool } from './KubeNetTool.js';
+export { KubeLogTool } from './KubeLogTool.js';

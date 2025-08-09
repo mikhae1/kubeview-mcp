@@ -24,6 +24,7 @@ jest.mock('../../src/tools/kubernetes/index.js', () => {
     KubeMetricsTool: jest.fn().mockImplementation(() => createMockTool('kube_metrics')),
     GetResourceTool: jest.fn().mockImplementation(() => createMockTool('kube_get')),
     GetContainerLogsTool: jest.fn().mockImplementation(() => createMockTool('kube_logs')),
+    KubeLogTool: jest.fn().mockImplementation(() => createMockTool('kube_log')),
     PortForwardTool: jest.fn().mockImplementation(() => createMockTool('kube_port')),
     ExecTool: jest.fn().mockImplementation(() => createMockTool('kube_exec')),
     KubeNetTool: jest.fn().mockImplementation(() => createMockTool('kube_net')),
@@ -134,14 +135,15 @@ describe('KubernetesToolsPlugin', () => {
     it('should initialize and register all consolidated tools', async () => {
       await plugin.initialize(mockServer);
 
-      // Should register all consolidated tools
-      expect(mockServer.registerTool).toHaveBeenCalledTimes(7);
+      // Should register all consolidated tools (now includes kube_log)
+      expect(mockServer.registerTool).toHaveBeenCalledTimes(8);
 
       // Verify some specific tools are registered
       const toolNames = mockServer.registerTool.mock.calls.map((call) => call[0].name);
       expect(toolNames).toContain('kube_list');
       expect(toolNames).toContain('kube_metrics');
       expect(toolNames).toContain('kube_get');
+      expect(toolNames).toContain('kube_log');
       expect(toolNames).toContain('kube_port');
       expect(toolNames).toContain('kube_exec');
       expect(toolNames).toContain('kube_net');

@@ -12,6 +12,7 @@ import {
   PortForwardTool,
   ExecTool,
   KubeNetTool,
+  KubeLogTool,
 } from '../tools/kubernetes/index.js';
 import { BaseToolsPlugin } from './BaseToolsPlugin.js';
 
@@ -43,6 +44,7 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
       new KubeMetricsTool(),
       new GetResourceTool(),
       new GetContainerLogsTool(),
+      new KubeLogTool(),
       new PortForwardTool(),
       new ExecTool(),
       new KubeNetTool(),

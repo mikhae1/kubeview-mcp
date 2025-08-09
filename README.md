@@ -10,7 +10,7 @@ KubeView MCP is a read-only Model Context Protocol (MCP) server that exposes AI-
 
 ## ✨ Features
 
-- **Kubernetes tools (read-only)**: list, get/describe, metrics, logs, exec (read-only), port-forward, and in-cluster network diagnostics
+- **Kubernetes tools (read-only)**: list, get/describe, metrics, single-pod logs, multi-pod streaming logs with event merge, exec (read-only), port-forward, and in-cluster network diagnostics
 - **Cluster overview**: one-shot, LLM-optimized diagnostics across nodes, workloads, storage, events, and security posture
 - **Helm integration**: list releases; fetch values, manifest, notes, hooks, history, status, and parsed resources
 - **Argo Workflows**: list/get workflows and fetch workflow logs
@@ -93,6 +93,13 @@ npm run command -- <tool_name> [--param=value ...]
   - Params: `scope` (`all|nodes|pods`), `namespace`, `podName`, `includeSummary`, `diagnostics`, `prometheusQueries[]`, `fetchPodSpecs`, thresholds (`topN`, `cpuSaturationThreshold`, `memorySaturationThreshold`, `podRestartThreshold`, `podLimitPressureThreshold`)
 - **kube_logs**: Pod/container logs (like `kubectl logs`)
   - Params: `podName` (required), `namespace`, `container`, `tailLines`, `since`, `previous`, `timestamps`
+- **kube_log**: Multi-pod & multi-container log tail with dynamic discovery and merged Events
+  - Selectors: `namespace`, `labelSelector`, `ownerKind` (`Deployment|DaemonSet|Job`), `ownerName`
+  - Filters: `podRegex`, `containerRegex`, `messageRegex`, `excludeRegex`, `jsonPaths` (e.g., `[{"path":"level","equals":"error"}]`)
+  - Time/tail: `tailLines`, `since` (e.g., `15m`), `sinceTime` (RFC3339), `timestamps`, `previous`
+  - Session bounds: `durationSeconds` (default 30), `maxLines`
+  - Events: `includeEvents` (default true), `eventType` (`Normal|Warning|All`)
+  - Output: `structure` (`object|text`). In object mode each line has `type: 'log'|'event'`. In text mode events are prefixed with `[event]`.
 - **kube_exec**: Execute a command in a container via Kubernetes API only; returns stdout/stderr
   - Params: `podName` (required), `namespace`, `container`, `args[]` | `argv` | `command`, `stdin`, `tty`, `timeoutSeconds`, `shell`
 - **kube_port**: Temporary port-forward to a pod or service (auto-terminates)
@@ -188,6 +195,18 @@ npm run command -- kube_metrics --includeSummary=true --diagnostics=true
 
 # Logs from a pod (last 200 lines)
 npm run command -- kube_logs --podName=nginx-123 --namespace=default --tailLines=200
+
+# Stream logs across pods by owner with events (10 minutes back)
+npm run command -- kube_log --namespace=prod --ownerKind=Deployment --ownerName=api --since=10m --includeEvents=true --durationSeconds=20
+
+# Filter by labels and container name, text output
+npm run command -- kube_log --namespace=default --labelSelector='app=db,tier=api' --containerRegex='^(main|sidecar)$' --structure=text --durationSeconds=15
+
+# Only errors from JSON logs
+npm run command -- kube_log --namespace=prod --labelSelector='app=my-api' --jsonPaths='[{"path":"level","equals":"error"}]' --messageRegex='timeout|exception' --since=30m --durationSeconds=20
+
+# Only events (text mode)
+npm run command -- kube_log --namespace=default --includeEvents=true --structure=text --messageRegex='^\\[event\\]' --durationSeconds=10
 
 # Port-forward service 80 -> local 8080 for 90s
 npm run command -- kube_port --serviceName=my-svc --namespace=default --remotePort=80 --localPort=8080 --timeoutSeconds=90
