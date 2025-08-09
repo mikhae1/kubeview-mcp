@@ -97,7 +97,7 @@ class KubeMCPCLI {
     console.log('  kubeview-mcp test            # Run tests');
     console.log('  kubeview-mcp lint            # Run linter');
     console.log('');
-    console.log('For more information, visit: https://github.com/your-org/kubeview-mcp');
+    console.log('For more information, visit: https://github.com/mikhae1/kubeview-mcp');
   }
 
   // Display version information

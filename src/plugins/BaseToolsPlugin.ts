@@ -1,8 +1,6 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { MCPPlugin, MCPServer } from '../server/MCPServer.js';
 
-const DEFAULT_TIMEOUT_MS = 30000;
-
 export interface ToolLike {
   tool: Tool;
 }
@@ -115,9 +113,9 @@ export abstract class BaseToolsPlugin<TTool extends ToolLike> implements MCPPlug
   protected computeGlobalTimeoutMs(params: any): number | undefined {
     const paramTimeout =
       params && typeof params.timeoutMs === 'number' ? params.timeoutMs : undefined;
-    const envTimeout = process.env.TIMEOUT
-      ? parseInt(process.env.TIMEOUT, DEFAULT_TIMEOUT_MS)
-      : undefined;
+    // Only parse the env var when defined; use base 10 and ignore NaN
+    const envTimeout =
+      process.env.TIMEOUT !== undefined ? Number.parseInt(process.env.TIMEOUT, 10) : undefined;
     const timeoutMs = paramTimeout ?? envTimeout;
     return Number.isFinite(timeoutMs as number) && (timeoutMs as number) > 0
       ? (timeoutMs as number)

@@ -13,6 +13,7 @@ import {
   ResourceTemplate,
 } from '@modelcontextprotocol/sdk/types.js';
 import winston from 'winston';
+import { isSensitiveMaskEnabled, maskObjectDeep } from '../utils/SensitiveData.js';
 
 /**
  * Plugin interface for extending MCP server functionality
@@ -266,17 +267,21 @@ export class MCPServer {
         throw new Error(error);
       }
 
+      const argsForLog = isSensitiveMaskEnabled()
+        ? maskObjectDeep(request.params.arguments)
+        : request.params.arguments;
       this.logger.info(`Executing tool: ${request.params.name}`, {
-        arguments: request.params.arguments,
+        arguments: argsForLog,
       });
 
       try {
         const result = await toolEntry.handler(request.params.arguments);
+        const outputPayload = isSensitiveMaskEnabled() ? maskObjectDeep(result) : result;
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(outputPayload, null, 2),
             },
           ],
         };

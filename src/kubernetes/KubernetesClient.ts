@@ -84,8 +84,6 @@ export class KubernetesClient {
     this.authMethod = this.detectAuthMethod();
     this.initializeClient();
 
-    this.config.skipTlsVerify = true;
-
     this.initializeApiClients();
 
     this._resources = new ResourceOperations(this);
