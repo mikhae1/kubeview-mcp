@@ -138,71 +138,90 @@ export class ExecTool implements BaseTool {
 
       const execApi = new (k8s as any).Exec(client.kubeConfig) as k8s.Exec;
       let statusObject: any = null;
-      let wsOrCloser: any;
-      const execPromise = (execApi as any)
-        .exec(
-          namespace,
-          podName,
-          container as string,
-          argv,
-          stdoutStream,
-          stderrStream,
-          stdinStream,
-          tty,
-          (status: any) => {
-            statusObject = status;
-          },
-        )
-        .then((ret: any) => {
-          wsOrCloser = ret;
-        })
-        .catch((err: any) => {
-          const msg = err?.response?.body?.message || err?.message || 'Unknown exec error';
-          throw new Error(`Exec failed: ${msg}`);
-        });
+      let ws: any;
+      let resolved = false;
+      let safetyTimer: NodeJS.Timeout | undefined;
 
-      let timeoutHandle: NodeJS.Timeout | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(
-          () => reject(new Error('Exec timed out')),
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        try {
+          if (safetyTimer) clearTimeout(safetyTimer);
+        } catch (_err) {
+          void _err;
+        }
+        try {
+          ws?.close?.();
+        } catch (_err) {
+          void _err;
+        }
+      };
+
+      const completionPromise = new Promise<void>((resolve, reject) => {
+        const resolveDone = () => {
+          if (!resolved) finish();
+          resolve();
+        };
+        const rejectDone = (err: any) => {
+          if (!resolved) finish();
+          reject(err);
+        };
+
+        // Start exec without awaiting it, so status callback can finish us early
+        (execApi as any)
+          .exec(
+            namespace,
+            podName,
+            container as string,
+            argv,
+            stdoutStream,
+            stderrStream,
+            stdinStream,
+            tty,
+            (status: any) => {
+              statusObject = status;
+              resolveDone();
+            },
+          )
+          .then((ret: any) => {
+            try {
+              ws = typeof ret === 'function' ? ret() : ret;
+              ws?.on?.('close', resolveDone);
+              ws?.on?.('error', resolveDone);
+              // If the websocket already closed before listeners attached, resolve now
+              try {
+                const rs = (ws as any)?.readyState;
+                if (typeof rs === 'number' && rs >= 2) {
+                  resolveDone();
+                }
+              } catch {
+                // ignore
+              }
+            } catch {
+              // ignore
+            }
+          })
+          .catch((err: any) => {
+            const msg = err?.response?.body?.message || err?.message || 'Unknown exec error';
+            rejectDone(new Error(`Exec failed: ${msg}`));
+          });
+
+        // safety timeout equal to timeoutSeconds (acts only if neither status nor ws close arrived)
+        safetyTimer = setTimeout(
+          () => rejectDone(new Error('Exec timed out')),
           timeoutSeconds * 1000,
         );
       });
 
-      try {
-        await Promise.race([execPromise, timeoutPromise]);
-      } finally {
-        if (timeoutHandle) {
-          clearTimeout(timeoutHandle);
-        }
-      }
+      await completionPromise;
 
-      const waitForFinish = (stream: Writable) =>
-        new Promise<void>((resolve) => {
-          let resolved = false;
-          let safetyTimer: NodeJS.Timeout | undefined;
-          const done = () => {
-            if (!resolved) {
-              resolved = true;
-              if (safetyTimer) clearTimeout(safetyTimer);
-              resolve();
-            }
-          };
-          stream.once('finish', done);
-          stream.once('close', done);
-          safetyTimer = setTimeout(done, 200);
-        });
+      const waitForDrain = () => new Promise<void>((resolve) => setTimeout(resolve, 300));
 
-      await Promise.all([waitForFinish(stdoutStream), waitForFinish(stderrStream)]);
+      await Promise.all([waitForDrain(), waitForDrain()]);
 
       // Attempt to close websocket if the client returned a close handle
       try {
-        if (typeof wsOrCloser === 'function') {
-          const ws = wsOrCloser();
-          ws?.close?.();
-        } else if (wsOrCloser && typeof wsOrCloser.close === 'function') {
-          wsOrCloser.close();
-        }
+        ws?.close?.();
       } catch {
         // ignore
       }

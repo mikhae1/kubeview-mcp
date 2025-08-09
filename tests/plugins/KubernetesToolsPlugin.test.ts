@@ -26,6 +26,7 @@ jest.mock('../../src/tools/kubernetes/index.js', () => {
     GetContainerLogsTool: jest.fn().mockImplementation(() => createMockTool('kube_logs')),
     PortForwardTool: jest.fn().mockImplementation(() => createMockTool('kube_port')),
     ExecTool: jest.fn().mockImplementation(() => createMockTool('kube_exec')),
+    KubeNetTool: jest.fn().mockImplementation(() => createMockTool('kube_net')),
   };
 });
 
@@ -133,8 +134,8 @@ describe('KubernetesToolsPlugin', () => {
     it('should initialize and register all consolidated tools', async () => {
       await plugin.initialize(mockServer);
 
-      // Should register fewer consolidated tools
-      expect(mockServer.registerTool).toHaveBeenCalledTimes(6);
+      // Should register all consolidated tools
+      expect(mockServer.registerTool).toHaveBeenCalledTimes(7);
 
       // Verify some specific tools are registered
       const toolNames = mockServer.registerTool.mock.calls.map((call) => call[0].name);
@@ -143,6 +144,7 @@ describe('KubernetesToolsPlugin', () => {
       expect(toolNames).toContain('kube_describe');
       expect(toolNames).toContain('kube_port');
       expect(toolNames).toContain('kube_exec');
+      expect(toolNames).toContain('kube_net');
     });
 
     it('should handle initialization errors', async () => {
