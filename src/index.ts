@@ -23,17 +23,18 @@ export async function main(): Promise<void> {
     const kubernetesPlugin = new KubernetesToolsPlugin();
     await server.loadPlugin(kubernetesPlugin);
 
-    // Load the Helm tools plugin
-    const helmPlugin = new HelmToolsPlugin();
-    await server.loadPlugin(helmPlugin);
+    // Load optional plugins (do not fail server startup if they are unavailable)
+    const optionalPlugins = [new HelmToolsPlugin(), new ArgoToolsPlugin(), new ArgoCDToolsPlugin()];
 
-    // Load the Argo tools plugin
-    const argoPlugin = new ArgoToolsPlugin();
-    await server.loadPlugin(argoPlugin);
-
-    // Load the ArgoCD tools plugin
-    const argoCDPlugin = new ArgoCDToolsPlugin();
-    await server.loadPlugin(argoCDPlugin);
+    for (const plugin of optionalPlugins) {
+      try {
+        await server.loadPlugin(plugin);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // Log to stderr so hosts like Claude surface it, but continue startup
+        console.error(`Optional plugin '${plugin.name}' failed to load: ${message}`);
+      }
+    }
 
     // Start the server
     await server.start();

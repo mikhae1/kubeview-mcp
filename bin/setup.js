@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { spawnSync } from 'child_process';
 import os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -26,6 +27,25 @@ class SetupManager {
 
   log(message, color = colors.reset) {
     console.log(`${color}${message}${colors.reset}`);
+  }
+
+  // Detect whether a CLI command is available by attempting a lightweight version call
+  isCliAvailable(cmd, args = ['version']) {
+    try {
+      const result = spawnSync(cmd, args, { stdio: 'ignore' });
+      return result.status === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  // Detect support for optional plugins
+  detectOptionalCliSupport() {
+    const helmAvailable = this.isCliAvailable('helm', ['version', '--short']);
+    const argoAvailable = this.isCliAvailable('argo', ['version']);
+    const argocdAvailable = this.isCliAvailable('argocd', ['version', '--client']);
+
+    return { helmAvailable, argoAvailable, argocdAvailable };
   }
 
   error(message, error = null) {
@@ -146,11 +166,16 @@ class SetupManager {
 
   // Create MCP server configuration
   createMcpServerConfig() {
+    const { helmAvailable, argoAvailable, argocdAvailable } = this.detectOptionalCliSupport();
     return {
       command: 'npx',
       args: ['-y', 'https://github.com/mikhae1/kubeview-mcp'],
       env: {
-        KUBECONFIG: process.env.KUBECONFIG || this.defaultKubeconfig
+        KUBECONFIG: process.env.KUBECONFIG || this.defaultKubeconfig,
+        // Disable optional plugins if their CLIs are not present to prevent startup failures in hosts like Claude
+        ...(helmAvailable ? {} : { DISABLE_HELM_PLUGIN: '1' }),
+        ...(argoAvailable ? {} : { DISABLE_ARGO_PLUGIN: '1' }),
+        ...(argocdAvailable ? {} : { DISABLE_ARGOCD_PLUGIN: '1' }),
       }
     };
   }
@@ -205,6 +230,15 @@ class SetupManager {
     if (serverConfig.env.LOG_LEVEL) {
       console.log(`  Log level: ${serverConfig.env.LOG_LEVEL}`);
     }
+
+    // Show optional plugin status
+    const helmDisabled = serverConfig.env.DISABLE_HELM_PLUGIN === '1' || serverConfig.env.DISABLE_HELM_PLUGIN === 'true';
+    const argoDisabled = serverConfig.env.DISABLE_ARGO_PLUGIN === '1' || serverConfig.env.DISABLE_ARGO_PLUGIN === 'true';
+    const argocdDisabled = serverConfig.env.DISABLE_ARGOCD_PLUGIN === '1' || serverConfig.env.DISABLE_ARGOCD_PLUGIN === 'true';
+    console.log('  Optional plugins:');
+    console.log(`    Helm:   ${helmDisabled ? 'disabled (helm CLI not found)' : 'enabled'}`);
+    console.log(`    Argo:   ${argoDisabled ? 'disabled (argo CLI not found)' : 'enabled'}`);
+    console.log(`    ArgoCD: ${argocdDisabled ? 'disabled (argocd CLI not found)' : 'enabled'}`);
 
     this.validateKubeconfig(serverConfig.env.KUBECONFIG);
 
