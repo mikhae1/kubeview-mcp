@@ -20,9 +20,9 @@ const createMockTool = (name: string) => ({
 // Mock the tools module (consolidated)
 jest.mock('../../src/tools/kubernetes/index.js', () => {
   return {
-    KubeListTool: jest.fn().mockImplementation(() => createMockTool('kube_get')),
+    KubeListTool: jest.fn().mockImplementation(() => createMockTool('kube_list')),
     KubeMetricsTool: jest.fn().mockImplementation(() => createMockTool('kube_metrics')),
-    GetResourceTool: jest.fn().mockImplementation(() => createMockTool('kube_describe')),
+    GetResourceTool: jest.fn().mockImplementation(() => createMockTool('kube_get')),
     GetContainerLogsTool: jest.fn().mockImplementation(() => createMockTool('kube_logs')),
     PortForwardTool: jest.fn().mockImplementation(() => createMockTool('kube_port')),
     ExecTool: jest.fn().mockImplementation(() => createMockTool('kube_exec')),
@@ -74,9 +74,9 @@ describe('KubernetesToolsPlugin', () => {
     it('should refresh context when creating new client for MCP tool execution', async () => {
       await plugin.initialize(mockServer);
 
-      // Get the registered tool handler for kube_get
+      // Get the registered tool handler for kube_list
       const registerToolCalls = mockServer.registerTool.mock.calls;
-      const kubeListCall = registerToolCalls.find((call) => call[0].name === 'kube_get');
+      const kubeListCall = registerToolCalls.find((call) => call[0].name === 'kube_list');
 
       expect(kubeListCall).toBeDefined();
 
@@ -92,7 +92,7 @@ describe('KubernetesToolsPlugin', () => {
     it('should refresh context when executing tool via getToolFunction', async () => {
       await plugin.initialize(mockServer);
 
-      const toolFunction = plugin.getToolFunction('kube_get');
+      const toolFunction = plugin.getToolFunction('kube_list');
       expect(toolFunction).toBeDefined();
 
       // Execute the tool function
@@ -104,7 +104,7 @@ describe('KubernetesToolsPlugin', () => {
     });
 
     it('should refresh context when executing command via static executeCommand', async () => {
-      await KubernetesToolsPlugin.executeCommand('kube_get', {});
+      await KubernetesToolsPlugin.executeCommand('kube_list', {});
 
       // Verify that refreshCurrentContext was called
       expect(mockClient.refreshCurrentContext).toHaveBeenCalled();
@@ -119,7 +119,7 @@ describe('KubernetesToolsPlugin', () => {
       await plugin.initialize(mockServer);
 
       const registerToolCalls = mockServer.registerTool.mock.calls;
-      const kubeListCall = registerToolCalls.find((call) => call[0].name === 'kube_get');
+      const kubeListCall = registerToolCalls.find((call) => call[0].name === 'kube_list');
       const toolHandler = kubeListCall![1];
 
       // Should throw because refreshCurrentContext fails
@@ -139,9 +139,9 @@ describe('KubernetesToolsPlugin', () => {
 
       // Verify some specific tools are registered
       const toolNames = mockServer.registerTool.mock.calls.map((call) => call[0].name);
-      expect(toolNames).toContain('kube_get');
+      expect(toolNames).toContain('kube_list');
       expect(toolNames).toContain('kube_metrics');
-      expect(toolNames).toContain('kube_describe');
+      expect(toolNames).toContain('kube_get');
       expect(toolNames).toContain('kube_port');
       expect(toolNames).toContain('kube_exec');
       expect(toolNames).toContain('kube_net');
@@ -172,7 +172,7 @@ describe('KubernetesToolsPlugin', () => {
       await plugin.initialize(mockServer);
 
       const registerToolCalls = mockServer.registerTool.mock.calls;
-      const kubeListCall = registerToolCalls.find((call) => call[0].name === 'kube_get');
+      const kubeListCall = registerToolCalls.find((call) => call[0].name === 'kube_list');
       const toolHandler = kubeListCall![1];
 
       await expect(toolHandler({})).rejects.toThrow('Client creation failed');

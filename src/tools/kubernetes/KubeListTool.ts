@@ -16,9 +16,9 @@ import { MetricOperations } from '../../kubernetes/resources/MetricOperations.js
  */
 export class KubeListTool implements BaseTool {
   tool: Tool = {
-    name: 'kube_get',
+    name: 'kube_list',
     description:
-      'Get Kubernetes resources by type with common selectors (supports: [pod, service, deployment, node, namespace, persistentvolume, persistentvolumeclaim, secret, configmap]). If resourceType is omitted, returns a comprehensive cluster health diagnostics and actionable AI insights for troubleshooting.',
+      'List Kubernetes resources by type with common selectors (supports: [pod, service, deployment, node, namespace, persistentvolume, persistentvolumeclaim, secret, configmap]). If resourceType is omitted, returns a consolidated cluster overview with diagnostics and actionable insights across supported resources.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -164,7 +164,7 @@ export class KubeListTool implements BaseTool {
       case 'resourcequota':
       case 'limitrange': {
         throw new Error(
-          `Listing for resourceType "${resourceType}" not implemented in kube_get yet`,
+          `Listing for resourceType "${resourceType}" not implemented in kube_list yet`,
         );
       }
       default:

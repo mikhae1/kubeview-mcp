@@ -13,9 +13,9 @@ import { MetricOperations } from '../../kubernetes/resources/MetricOperations.js
  */
 export class GetResourceTool implements BaseTool {
   tool: Tool = {
-    name: 'kube_describe',
+    name: 'kube_get',
     description:
-      'Describe a single Kubernetes resource by type and name. Accepts any Kubernetes resource (core, built-in, or CRD) via kind/plural or group/version/resource, with customized analysis for pod, service, deployment, configmap, and secret. Returns structured details with events and diagnostics.',
+      'Get a specific Kubernetes resource directly from the API (close to kubectl describe). Supports any resource (core, built-in, or CRD) via kind/plural or group/version/resource, and provides structured details with optional events and diagnostics. Also supports listing when no name is provided.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -27,7 +27,7 @@ export class GetResourceTool implements BaseTool {
         name: CommonSchemas.name,
         namespace: {
           ...CommonSchemas.namespace,
-          description: 'Kubernetes namespace (defaults to "default")',
+          description: 'Kubernetes namespace',
         },
         skipSanitize: {
           type: 'boolean',
