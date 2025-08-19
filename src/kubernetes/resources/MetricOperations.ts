@@ -1171,11 +1171,11 @@ export class MetricOperations {
      * 3) Kubelet /stats/summary (final fallback)
      * -------------------------------------------------------- */
     const disableKubelet =
-      process.env.KUBE_METRICS_DISABLE_KUBELET === 'true' ||
-      process.env.KUBE_METRICS_DISABLE_KUBELET === '1';
+      process.env.MCP_KUBE_METRICS_DISABLE_KUBELET === 'true' ||
+      process.env.MCP_KUBE_METRICS_DISABLE_KUBELET === '1';
     if (disableKubelet) {
       this.logger?.warn(
-        'Kubelet summary fallback disabled via KUBE_METRICS_DISABLE_KUBELET. Returning empty lists.',
+        'Kubelet summary fallback disabled via MCP_KUBE_METRICS_DISABLE_KUBELET. Returning empty lists.',
       );
       return this.normalizeAndMergeMetrics(null, null, [], allPodsRaw);
     }

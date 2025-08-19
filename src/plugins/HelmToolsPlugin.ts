@@ -24,11 +24,11 @@ export class HelmToolsPlugin extends BaseToolsPlugin<HelmBaseTool> {
   }
 
   private static createLogger(): winston.Logger | undefined {
-    if (!process.env.LOG_LEVEL) {
+    if (!process.env.MCP_LOG_LEVEL) {
       return undefined;
     }
     return winston.createLogger({
-      level: process.env.LOG_LEVEL,
+      level: process.env.MCP_LOG_LEVEL,
       format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
       transports: [
         new winston.transports.Console({
@@ -40,7 +40,9 @@ export class HelmToolsPlugin extends BaseToolsPlugin<HelmBaseTool> {
   }
 
   protected isDisabled(): boolean {
-    return process.env.DISABLE_HELM_PLUGIN === 'true' || process.env.DISABLE_HELM_PLUGIN === '1';
+    return (
+      process.env.MCP_DISABLE_HELM_PLUGIN === 'true' || process.env.MCP_DISABLE_HELM_PLUGIN === '1'
+    );
   }
 
   protected async validate(): Promise<void> {
@@ -48,7 +50,10 @@ export class HelmToolsPlugin extends BaseToolsPlugin<HelmBaseTool> {
   }
 
   static async executeCommand(commandName: string, params: Record<string, unknown>): Promise<any> {
-    if (process.env.DISABLE_HELM_PLUGIN === 'true' || process.env.DISABLE_HELM_PLUGIN === '1') {
+    if (
+      process.env.MCP_DISABLE_HELM_PLUGIN === 'true' ||
+      process.env.MCP_DISABLE_HELM_PLUGIN === '1'
+    ) {
       throw new Error('Helm plugin is disabled');
     }
 

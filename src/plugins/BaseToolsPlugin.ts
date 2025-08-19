@@ -115,7 +115,9 @@ export abstract class BaseToolsPlugin<TTool extends ToolLike> implements MCPPlug
       params && typeof params.timeoutMs === 'number' ? params.timeoutMs : undefined;
     // Only parse the env var when defined; use base 10 and ignore NaN
     const envTimeout =
-      process.env.TIMEOUT !== undefined ? Number.parseInt(process.env.TIMEOUT, 10) : undefined;
+      process.env.MCP_TIMEOUT !== undefined
+        ? Number.parseInt(process.env.MCP_TIMEOUT, 10)
+        : undefined;
     const timeoutMs = paramTimeout ?? envTimeout;
     return Number.isFinite(timeoutMs as number) && (timeoutMs as number) > 0
       ? (timeoutMs as number)

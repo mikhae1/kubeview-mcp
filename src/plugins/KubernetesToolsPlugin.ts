@@ -62,11 +62,11 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
    * Create a Winston logger for CLI usage only if LOG_LEVEL is set
    */
   private static createLogger(): winston.Logger | undefined {
-    if (!process.env.LOG_LEVEL) {
+    if (!process.env.MCP_LOG_LEVEL) {
       return undefined;
     }
     return winston.createLogger({
-      level: process.env.LOG_LEVEL,
+      level: process.env.MCP_LOG_LEVEL,
       format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
       transports: [
         new winston.transports.Console({
@@ -85,8 +85,8 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
    */
   static async executeCommand(commandName: string, params: Record<string, unknown>): Promise<any> {
     if (
-      process.env.DISABLE_KUBERNETES_PLUGIN === 'true' ||
-      process.env.DISABLE_KUBERNETES_PLUGIN === '1'
+      process.env.MCP_DISABLE_KUBERNETES_PLUGIN === 'true' ||
+      process.env.MCP_DISABLE_KUBERNETES_PLUGIN === '1'
     ) {
       throw new Error('Kubernetes plugin is disabled');
     }
@@ -147,12 +147,12 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
   /** Build Kubernetes client config from environment variables */
   private buildConfigFromEnv(): KubernetesClientConfig {
     const cfg: KubernetesClientConfig = {};
-    const context = process.env.KUBE_CONTEXT;
+    const context = process.env.MCP_KUBE_CONTEXT;
     if (context && typeof context === 'string' && context.trim().length > 0) {
       cfg.context = context.trim();
     }
 
-    const skipTlsEnv = process.env.K8S_SKIP_TLS_VERIFY;
+    const skipTlsEnv = process.env.MCP_K8S_SKIP_TLS_VERIFY;
     if (skipTlsEnv && (skipTlsEnv === 'true' || skipTlsEnv === '1')) {
       cfg.skipTlsVerify = true;
     }

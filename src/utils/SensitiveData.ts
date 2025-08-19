@@ -11,8 +11,8 @@ const DEFAULT_MASK = '*** FILTERED ***';
 export function isSensitiveMaskEnabled(): boolean {
   const value =
     process.env.MCP_HIDE_SENSITIVE ||
-    process.env.HIDE_SENSITIVE_DATA ||
-    process.env.MASK_SENSITIVE_DATA ||
+    process.env.MCP_HIDE_SENSITIVE_DATA ||
+    process.env.MCP_MASK_SENSITIVE_DATA ||
     '';
   return value === 'true' || value === '1' || value === 'yes' || value === 'on';
 }
@@ -21,7 +21,7 @@ export function isSensitiveMaskEnabled(): boolean {
  * Returns the mask string to use. Can be overridden via SENSITIVE_MASK env var.
  */
 export function getMaskString(): string {
-  return process.env.SENSITIVE_MASK || DEFAULT_MASK;
+  return process.env.MCP_SENSITIVE_MASK || DEFAULT_MASK;
 }
 
 /**

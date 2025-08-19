@@ -173,9 +173,9 @@ class SetupManager {
       env: {
         KUBECONFIG: process.env.KUBECONFIG || this.defaultKubeconfig,
         // Disable optional plugins if their CLIs are not present to prevent startup failures in hosts like Claude
-        ...(helmAvailable ? {} : { DISABLE_HELM_PLUGIN: '1' }),
-        ...(argoAvailable ? {} : { DISABLE_ARGO_PLUGIN: '1' }),
-        ...(argocdAvailable ? {} : { DISABLE_ARGOCD_PLUGIN: '1' }),
+        ...(helmAvailable ? {} : { MCP_DISABLE_HELM_PLUGIN: '1' }),
+        ...(argoAvailable ? {} : { MCP_DISABLE_ARGO_PLUGIN: '1' }),
+        ...(argocdAvailable ? {} : { MCP_DISABLE_ARGOCD_PLUGIN: '1' }),
       }
     };
   }
@@ -227,14 +227,14 @@ class SetupManager {
     console.log(`  Entry point: ${serverConfig.args[0]}`);
     console.log(`  Kubeconfig: ${serverConfig.env.KUBECONFIG}`);
 
-    if (serverConfig.env.LOG_LEVEL) {
-      console.log(`  Log level: ${serverConfig.env.LOG_LEVEL}`);
+    if (serverConfig.env.MCP_LOG_LEVEL) {
+      console.log(`  Log level: ${serverConfig.env.MCP_LOG_LEVEL}`);
     }
 
     // Show optional plugin status
-    const helmDisabled = serverConfig.env.DISABLE_HELM_PLUGIN === '1' || serverConfig.env.DISABLE_HELM_PLUGIN === 'true';
-    const argoDisabled = serverConfig.env.DISABLE_ARGO_PLUGIN === '1' || serverConfig.env.DISABLE_ARGO_PLUGIN === 'true';
-    const argocdDisabled = serverConfig.env.DISABLE_ARGOCD_PLUGIN === '1' || serverConfig.env.DISABLE_ARGOCD_PLUGIN === 'true';
+    const helmDisabled = serverConfig.env.MCP_DISABLE_HELM_PLUGIN === '1' || serverConfig.env.MCP_DISABLE_HELM_PLUGIN === 'true';
+    const argoDisabled = serverConfig.env.MCP_DISABLE_ARGO_PLUGIN === '1' || serverConfig.env.MCP_DISABLE_ARGO_PLUGIN === 'true';
+    const argocdDisabled = serverConfig.env.MCP_DISABLE_ARGOCD_PLUGIN === '1' || serverConfig.env.MCP_DISABLE_ARGOCD_PLUGIN === 'true';
     console.log('  Optional plugins:');
     console.log(`    Helm:   ${helmDisabled ? 'disabled (helm CLI not found)' : 'enabled'}`);
     console.log(`    Argo:   ${argoDisabled ? 'disabled (argo CLI not found)' : 'enabled'}`);

@@ -4,7 +4,7 @@
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8+-blue)](https://www.typescriptlang.org/)
 
-KubeView MCP is a read-only Model Context Protocol (MCP) server that exposes AI-friendly tools for safe Kubernetes, Helm, Argo Workflows, and Argo CD introspection. It pairs with Cursor IDE, Claude Desktop, and other MCP clients to let you inspect, diagnose, and debug clusters via natural language—without any write operations.
+KubeView MCP is a read-only Model Context Protocol (MCP) server that exposes AI-friendly tools for safe Kubernetes, Helm, Argo Workflows, and Argo CD introspection. It pairs with Cursor IDE, Claude Code/Desktop, and other MCP clients to let you inspect, diagnose, and debug clusters via natural language and without any change operations.
 
 ---
 
@@ -135,12 +135,14 @@ npm run command -- <tool_name> [--param=value ...]
 Provide env vars via your MCP client config or shell.
 
 - **KUBECONFIG**: Path to kubeconfig (default: `$HOME/.kube/config`)
-- **LOG_LEVEL**: `error|warn|info|debug` (server logs also write to `kubeview-mcp.log`)
-- **TIMEOUT**: Global per-tool timeout in ms (applies to all tools)
-- CLI timeouts: **HELM_TIMEOUT**, **ARGO_TIMEOUT**, **ARGOCD_TIMEOUT** (ms)
-- CLI executable overrides: **HELM_PATH**, **ARGO_PATH**, **ARGOCD_PATH**
-- Plugin toggles: **DISABLE_KUBERNETES_PLUGIN**, **DISABLE_HELM_PLUGIN**, **DISABLE_ARGO_PLUGIN**, **DISABLE_ARGOCD_PLUGIN** (`true|1` to disable)
-- Kubernetes options: **KUBE_CONTEXT**, **K8S_SKIP_TLS_VERIFY** (`true|1`)
+- **MCP_LOG_LEVEL**: `error|warn|info|debug`
+- **MCP_LOG_ENABLE**: `true|1` to enable server file logging (default: disabled)
+- **MCP_LOG_FILE**: Path to server log file (default when enabled: `kubeview-mcp.log`)
+- **MCP_TIMEOUT**: Global per-tool timeout in ms (applies to all tools)
+- CLI timeouts: **MCP_HELM_TIMEOUT**, **MCP_ARGO_TIMEOUT**, **MCP_ARGOCD_TIMEOUT** (ms)
+- CLI executable overrides: **MCP_HELM_PATH**, **MCP_ARGO_PATH**, **MCP_ARGOCD_PATH**
+- Plugin toggles: **MCP_DISABLE_KUBERNETES_PLUGIN**, **MCP_DISABLE_HELM_PLUGIN**, **MCP_DISABLE_ARGO_PLUGIN**, **MCP_DISABLE_ARGOCD_PLUGIN** (`true|1` to disable)
+- Kubernetes options: **MCP_KUBE_CONTEXT**, **MCP_K8S_SKIP_TLS_VERIFY** (`true|1`)
 
 Example (Cursor `mcp.json`):
 
@@ -152,9 +154,9 @@ Example (Cursor `mcp.json`):
       "args": ["-y", "https://github.com/mikhae1/kubeview-mcp"],
       "env": {
         "KUBECONFIG": "$HOME/.kube/config",
-        "LOG_LEVEL": "info",
-        "HELM_TIMEOUT": "45000",
-        "DISABLE_ARGO_PLUGIN": "1"
+        "MCP_LOG_LEVEL": "info",
+        "MCP_HELM_TIMEOUT": "45000",
+        "MCP_DISABLE_ARGO_PLUGIN": "1"
       }
     }
   }
@@ -167,8 +169,8 @@ Example (Cursor `mcp.json`):
 
 Global masking prevents accidental disclosure of secrets (enabled when any of the flags below are set):
 
-- Enable: `MCP_HIDE_SENSITIVE` or `HIDE_SENSITIVE_DATA` or `MASK_SENSITIVE_DATA` → `true|1|yes|on`
-- Mask text override: `SENSITIVE_MASK` (default: `*** FILTERED ***`)
+- Enable: `MCP_HIDE_SENSITIVE` or `MCP_HIDE_SENSITIVE_DATA` or `MCP_MASK_SENSITIVE_DATA` → `true|1|yes|on`
+- Mask text override: `MCP_SENSITIVE_MASK` (default: `*** FILTERED ***`)
 
 Effects:
 

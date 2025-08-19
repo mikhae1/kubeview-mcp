@@ -66,19 +66,30 @@ export class MCPServer {
   constructor(options: MCPServerOptions = {}) {
     this.options = options;
     // Initialize Winston logger
-    this.logger = winston.createLogger({
-      level: process.env.LOG_LEVEL || 'info',
-      format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
-      transports: [
-        new winston.transports.Console({
-          stderrLevels: ['error', 'warn', 'info', 'verbose', 'debug', 'silly'],
-          format: winston.format.combine(winston.format.colorize(), winston.format.simple()),
-        }),
+    const transports: winston.transport[] = [
+      new winston.transports.Console({
+        stderrLevels: ['error', 'warn', 'info', 'verbose', 'debug', 'silly'],
+        format: winston.format.combine(winston.format.colorize(), winston.format.simple()),
+      }),
+    ];
+
+    // Optional file logging controlled by env
+    const isFileLogEnabled =
+      process.env.MCP_LOG_ENABLE === 'true' || process.env.MCP_LOG_ENABLE === '1';
+    if (isFileLogEnabled) {
+      const logFilePath = process.env.MCP_LOG_FILE || 'kubeview-mcp.log';
+      transports.push(
         new winston.transports.File({
-          filename: 'kubeview-mcp.log',
+          filename: logFilePath,
           format: winston.format.json(),
         }),
-      ],
+      );
+    }
+
+    this.logger = winston.createLogger({
+      level: process.env.MCP_LOG_LEVEL || 'info',
+      format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
+      transports,
     });
 
     // Initialize MCP server

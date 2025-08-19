@@ -42,8 +42,8 @@ describe('BaseTool', () => {
   });
 
   afterEach(() => {
-    delete process.env.LOG_LEVEL;
-    delete process.env.HELM_TIMEOUT;
+    delete process.env.MCP_LOG_LEVEL;
+    delete process.env.MCP_HELM_TIMEOUT;
     delete process.env.SHELL;
   });
 
@@ -166,7 +166,7 @@ describe('BaseTool', () => {
     });
 
     it('should handle timeout for long-running commands', async () => {
-      process.env.HELM_TIMEOUT = '100'; // 100ms timeout for testing
+      process.env.MCP_HELM_TIMEOUT = '100'; // 100ms timeout for testing
       const args = ['list'];
 
       // Mock long-running process that doesn't complete
@@ -208,7 +208,7 @@ describe('BaseTool', () => {
     });
 
     it('should log debug information when LOG_LEVEL is debug', async () => {
-      process.env.LOG_LEVEL = 'debug';
+      process.env.MCP_LOG_LEVEL = 'debug';
       const consoleSpy = jest.spyOn(console, 'debug').mockImplementation();
 
       const args = ['list'];

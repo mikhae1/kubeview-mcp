@@ -87,12 +87,12 @@ export async function executeCliCommand(
   executablePath = toolName,
   timeoutEnvVar = `${toolName.toUpperCase()}_TIMEOUT`,
 ): Promise<any> {
-  const timeout = parseInt(process.env[timeoutEnvVar] || '30000', 10);
+  const timeout = parseInt(process.env[`MCP_${timeoutEnvVar}`] || '30000', 10);
   const useShell = false; // Security-first approach: never use shell
-  const overridePathEnvVar = `${toolName.toUpperCase()}_PATH`;
+  const overridePathEnvVar = `MCP_${toolName.toUpperCase()}_PATH`;
   const effectiveExecutable = process.env[overridePathEnvVar] || executablePath;
 
-  if (process.env.LOG_LEVEL === 'debug') {
+  if (process.env.MCP_LOG_LEVEL === 'debug') {
     console.debug(`Executing: ${toolName} ${args.join(' ')}`);
     if (process.env[overridePathEnvVar]) {
       console.debug(
