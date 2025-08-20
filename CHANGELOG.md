@@ -11,7 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Changed variable naming**
 - **Diabled logging by default**
 
-
 ## [1.1.0] - 2025-08-09
 
 ### Added
