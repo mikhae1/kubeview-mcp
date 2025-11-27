@@ -8,7 +8,6 @@ import { BaseToolsPlugin } from './BaseToolsPlugin.js';
  */
 export class ArgoCDToolsPlugin extends BaseToolsPlugin<ArgoCDBaseTool> {
   name = 'argocd-tools';
-  version = '0.1.0';
 
   protected createToolInstances(): ArgoCDBaseTool[] {
     return [new ArgoCDAppTool()];

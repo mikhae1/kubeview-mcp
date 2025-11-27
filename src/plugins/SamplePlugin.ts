@@ -6,11 +6,10 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js';
  */
 export class SamplePlugin implements MCPPlugin {
   name = 'sample-plugin';
-  version = '1.0.0';
 
   async initialize(server: MCPServer): Promise<void> {
     const logger = server.getLogger();
-    logger.info(`Initializing ${this.name} v${this.version}`);
+    logger.info(`Initializing ${this.name}`);
 
     // Register a sample tool
     const sampleTool: Tool = {

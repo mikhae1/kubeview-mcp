@@ -14,7 +14,6 @@ import { BaseToolsPlugin } from './BaseToolsPlugin.js';
  */
 export class ArgoToolsPlugin extends BaseToolsPlugin<ArgoBaseTool> {
   name = 'argo-tools';
-  version = '0.1.0';
 
   protected createToolInstances(): ArgoBaseTool[] {
     return [new ArgoListTool(), new ArgoLogsTool(), new ArgoGetTool()];

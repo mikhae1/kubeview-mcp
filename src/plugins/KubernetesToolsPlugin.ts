@@ -21,7 +21,6 @@ import { BaseToolsPlugin } from './BaseToolsPlugin.js';
  */
 export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
   name = 'kubernetes-tools';
-  version = '0.1.0';
 
   private clientCacheByContext: Map<string, KubernetesClient> = new Map();
   private lastUsedAtByContext: Map<string, number> = new Map();

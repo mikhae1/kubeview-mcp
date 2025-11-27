@@ -154,7 +154,6 @@ describe('MCPServer', () => {
     it('should load a plugin successfully', async () => {
       const mockPlugin: MCPPlugin = {
         name: 'test-plugin',
-        version: '1.0.0',
         initialize: jest.fn<(server: MCPServer) => Promise<void>>().mockResolvedValue(undefined),
       };
 
@@ -162,14 +161,13 @@ describe('MCPServer', () => {
 
       expect(mockPlugin.initialize).toHaveBeenCalledWith(server);
       const logger = server.getLogger() as any;
-      expect(logger.info).toHaveBeenCalledWith('Loading plugin: test-plugin v1.0.0');
+      expect(logger.info).toHaveBeenCalledWith('Loading plugin: test-plugin');
       expect(logger.info).toHaveBeenCalledWith('Plugin loaded successfully: test-plugin');
     });
 
     it('should throw error when loading duplicate plugin', async () => {
       const mockPlugin: MCPPlugin = {
         name: 'test-plugin',
-        version: '1.0.0',
         initialize: jest.fn<(server: MCPServer) => Promise<void>>().mockResolvedValue(undefined),
       };
 
@@ -183,7 +181,6 @@ describe('MCPServer', () => {
     it('should handle plugin initialization failure', async () => {
       const mockPlugin: MCPPlugin = {
         name: 'failing-plugin',
-        version: '1.0.0',
         initialize: jest
           .fn<(server: MCPServer) => Promise<void>>()
           .mockRejectedValue(new Error('Plugin init failed')),
@@ -237,7 +234,6 @@ describe('MCPServer', () => {
     it('should shutdown plugins on stop', async () => {
       const mockPlugin: MCPPlugin = {
         name: 'test-plugin',
-        version: '1.0.0',
         initialize: jest.fn<(server: MCPServer) => Promise<void>>().mockResolvedValue(undefined),
         shutdown: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
       };
@@ -254,7 +250,6 @@ describe('MCPServer', () => {
     it('should handle plugin shutdown failure gracefully', async () => {
       const mockPlugin: MCPPlugin = {
         name: 'failing-plugin',
-        version: '1.0.0',
         initialize: jest.fn<(server: MCPServer) => Promise<void>>().mockResolvedValue(undefined),
         shutdown: jest.fn<() => Promise<void>>().mockRejectedValue(new Error('Shutdown failed')),
       };

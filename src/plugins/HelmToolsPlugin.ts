@@ -13,7 +13,6 @@ import { BaseToolsPlugin } from './BaseToolsPlugin.js';
  */
 export class HelmToolsPlugin extends BaseToolsPlugin<HelmBaseTool> {
   name = 'helm-tools';
-  version = '0.1.0';
 
   protected createToolInstances(): HelmBaseTool[] {
     return [new HelmListTool(), new HelmGetTool()];

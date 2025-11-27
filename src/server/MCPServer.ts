@@ -20,7 +20,6 @@ import { isSensitiveMaskEnabled, maskObjectDeep } from '../utils/SensitiveData.j
  */
 export interface MCPPlugin {
   name: string;
-  version: string;
   initialize(server: MCPServer): Promise<void>;
   shutdown?(): Promise<void>;
   /**
@@ -96,7 +95,7 @@ export class MCPServer {
     this.server = new Server(
       {
         name: 'kubeview-mcp',
-        version: '0.1.0',
+        version: '',
       },
       {
         capabilities: {
@@ -266,7 +265,7 @@ export class MCPServer {
           this.server = new Server(
             {
               name: 'kubeview-mcp',
-              version: '0.1.0',
+              version: '',
             },
             {
               capabilities: {
@@ -465,7 +464,7 @@ export class MCPServer {
       throw new Error(`Plugin already loaded: ${plugin.name}`);
     }
 
-    this.logger.info(`Loading plugin: ${plugin.name} v${plugin.version}`);
+    this.logger.info(`Loading plugin: ${plugin.name}`);
 
     try {
       await plugin.initialize(this);

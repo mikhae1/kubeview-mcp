@@ -12,7 +12,6 @@ export interface ToolLike {
  */
 export abstract class BaseToolsPlugin<TTool extends ToolLike> implements MCPPlugin {
   abstract name: string;
-  abstract version: string;
 
   protected commands: TTool[] = [];
   protected logger?: MCPServer['logger'];
