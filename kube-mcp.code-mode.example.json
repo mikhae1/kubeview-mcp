@@ -1,0 +1,17 @@
+{
+  "workspaceDir": "./workspace",
+  "generatedDir": "./generated/servers",
+  "enablePII": false,
+  "sandbox": {
+    "memoryLimitMb": 256,
+    "timeoutMs": 5000
+  },
+  "servers": [
+    {
+      "name": "kubeview-mcp",
+      "command": "node",
+      "args": ["./dist/src/cli/cli.js"],
+      "timeoutMs": 15000
+    }
+  ]
+}

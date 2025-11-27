@@ -17,6 +17,11 @@ export class GetContainerLogsTool implements BaseTool {
           type: 'string',
           description: 'Name of the pod',
         },
+        name: {
+          type: 'string',
+          description: 'Alias for podName (pod name). Either podName or name is accepted.',
+          optional: true,
+        },
         namespace: {
           ...CommonSchemas.namespace,
           description: 'Kubernetes namespace (defaults to "default")',
@@ -54,7 +59,8 @@ export class GetContainerLogsTool implements BaseTool {
   async execute(params: any, client: KubernetesClient): Promise<any> {
     try {
       const {
-        podName,
+        podName: podNameRaw,
+        name: nameAlias,
         namespace = 'default',
         container,
         tailLines,
@@ -62,6 +68,15 @@ export class GetContainerLogsTool implements BaseTool {
         previous = false,
         timestamps = false,
       } = params;
+
+      const podName = (podNameRaw || nameAlias)?.toString();
+
+      if (!podName) {
+        throw new Error(
+          'podName is required. Provide { podName: "my-pod" } (alias: name). ' +
+            'Example: await tools.kubernetes.logs({ podName: "nginx-123", namespace: "default" });',
+        );
+      }
 
       // Convert duration string to seconds if provided
       let sinceSeconds: number | undefined;

@@ -4,7 +4,7 @@
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8+-blue)](https://www.typescriptlang.org/)
 
-KubeView MCP is a read-only Model Context Protocol (MCP) server that exposes AI-friendly tools for safe Kubernetes, Helm, Argo Workflows, and Argo CD introspection. It pairs with Cursor IDE, Claude Code/Desktop, and other MCP clients to let you inspect, diagnose, and debug clusters via natural language and without any change operations.
+KubeView MCP is a read-only Model Context Protocol (MCP) server that exposes AI-friendly tools for safe Kubernetes, Helm, Argo Workflows, and Argo CD introspection. It pairs with Cursor IDE, Claude Code/Desktop, and other MCP clients to let you inspect, diagnose, and debug clusters via natural language and without any write operations.
 
 ---
 
@@ -22,13 +22,7 @@ KubeView MCP is a read-only Model Context Protocol (MCP) server that exposes AI-
 
 ## 🚀 Quick Start
 
-### Zero-install via npx
-
-```bash
-npx -y https://github.com/mikhae1/kubeview-mcp
-```
-
-Add to your MCP client config (for Cursor, `~/.cursor/mcp.json`):
+Add to your MCP client config:
 
 ```json
 {
@@ -44,13 +38,38 @@ Add to your MCP client config (for Cursor, `~/.cursor/mcp.json`):
 }
 ```
 
+If you want to use code-mode only (heavy context tasks, like logs parsing, etc.):
+
+```json
+{
+  "mcpServers": {
+    "kubeview-mcp": {
+      "command": "npx",
+      "args": ["-y", "https://github.com/mikhae1/kubeview-mcp"],
+      "env": {
+        "KUBECONFIG": "$HOME/.kube/config",
+        "NODE_MODE": "code"
+      }
+    }
+  }
+}
+```
+
 ### Prerequisites
 
 - Node.js ≥ 18
 - Access to a Kubernetes cluster (kubeconfig)
-- Optional CLIs on PATH when using those plugins: `helm`, `argo`, `argocd`
+- Optional CLIs on PATH if you want to use those plugins: `helm`, `argo`, `argocd`
 
 ### Local install
+
+#### npx
+
+```bash
+npx -y https://github.com/mikhae1/kubeview-mcp
+```
+
+#### git
 
 ```bash
 git clone https://github.com/mikhae1/kubeview-mcp.git
@@ -70,9 +89,66 @@ npm start
 
 # Or use the bundled binary wrapper
 kubeview-mcp serve
+
+# Launch the code-mode runtime (see section below)
+npm run code-mode
 ```
 
----
+## 🧠 Code-Mode Execution
+
+Inspired by [Code execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp), KubeView now ships with a code-mode runtime that lets agents explore generated TypeScript API, search tools progressively, and run sandboxed workflows without piping giant schemas through the model context.
+
+### What it provides
+
+- **MCP bridge layer** – connects to MCP server tools.
+- **Schema→TypeScript codegen** – converts every tool schema into `generated/servers/<server>/<tool>.ts` wrappers plus runtime helpers (`generated/runtime/*`), so agents can `import` strongly-typed helpers instead of copying JSON schemas.
+- **Tool search utilities** – manifests + runtime helpers (`toolSearch.ts`, `search_tools` MCP tool) let agents progressively discover servers and tools without loading everything upfront.
+- **Sandboxed execution** – `isolated-vm` powers a locked-down Node.js-like environment with controlled `console`, MCP tool access, and a scoped filesystem bridge.
+- **Stateful workspace & skills** – the sandbox exposes a safe filesystem rooted at `./workspace`, including a `skills/` folder with a `SKILL.md` convention for reusable snippets.
+
+### How to use
+
+#### Exposing only the code-mode entry tool
+
+To present a single `run_code` tool to your MCP client (and force all heavy work through the filesystem runtime), start the server with `NODE_MODE=code`, e.g.:
+
+```bash
+NODE_MODE=code npx -y https://github.com/mikhae1/kubeview-mcp
+```
+
+In this mode the server registers only the `run_code` tool, which accepts the following parameters:
+
+```ts
+{
+  code: string;          // required – snippet you plan to execute in the sandbox
+  input?: string;        // optional stdin payload
+}
+```
+
+Calling `run_code` doesn’t execute anything inside the MCP process; instead it returns the generated filesystem tree (`generated/servers/...`, `generated/runtime/...`) plus instructions for launching `kubeview-mcp-code-mode` / `npm run code-mode`, keeping the MCP handshake tiny while the real work happens inside the sandbox.
+
+### Manually setting up the sandbox
+
+1. Copy the sample config and edit it for your environment:
+   ```bash
+   cp kube-mcp.code-mode.example.json kube-mcp.code-mode.json
+   ```
+2. Build the project so the CLI wrapper can import the compiled entrypoint:
+   ```bash
+   npm run build
+   ```
+3. Edit `workspace/main.ts` (auto-created on first run) to import generated helpers:
+
+4. Run the runtime (or use the new `kubeview-mcp-code-mode` binary):
+   ```bash
+   npm run code-mode
+   # or
+   kubeview-mcp-code-mode
+   ```
+
+Generated modules call back into real MCP servers via the sandbox bridge, so large responses stay in the execution environment and only summaries hit the model context.
+
+The runtime writes everything under `generated/` and `workspace/`. Clean them up at any time to force regeneration.
 
 ## 📟 Tool Index (CLI)
 
@@ -218,34 +294,10 @@ npm run command -- kube_net --sourcePod=api-0 --namespace=prod --targetService=d
 
 # Helm release values (masked)
 npm run command -- helm_get --what=values --releaseName=my-release --namespace=default --allValues=true
-
-# Argo CD app resources
-npm run command -- argocd_app --operation=resources --appName=my-app --outputFormat=json
 ```
-
----
-
-## 🤝 Contributing
-
-1. Fork the repo
-2. Create a feature branch: `git checkout -b feat/my-awesome-feature`
-3. Commit: `git commit -m "feat: add my awesome feature"`
-4. Push: `git push origin feat/my-awesome-feature`
-5. Open a Pull Request
-
-Tip: run `npm run lint` and `npm run test` locally before submitting.
 
 ---
 
 ## 📄 License
 
 MIT – see `LICENSE`.
-
----
-
-## 🙏 Acknowledgments
-
-- Model Context Protocol SDK
-- Kubernetes JavaScript Client
-- Winston
-- TypeScript

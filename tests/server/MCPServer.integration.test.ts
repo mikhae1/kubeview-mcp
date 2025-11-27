@@ -161,8 +161,10 @@ describe('MCPServer Integration Tests', () => {
       expect(response).toBeDefined();
 
       const parsedResponse = JSON.parse(response!);
-      expect(parsedResponse.result.tools).toHaveLength(1);
-      expect(parsedResponse.result.tools[0].name).toBe('test-kubernetes-tool');
+      expect(parsedResponse.result.tools.length).toBeGreaterThanOrEqual(1);
+      expect(
+        parsedResponse.result.tools.some((tool: Tool) => tool.name === 'test-kubernetes-tool'),
+      ).toBe(true);
     });
 
     it('should handle tool execution', async () => {

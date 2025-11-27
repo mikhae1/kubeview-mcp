@@ -26,29 +26,49 @@ export class KubeLogTool implements BaseTool {
   tool: Tool = {
     name: 'kube_log',
     description:
-      'Tail logs from multiple pods/containers with dynamic discovery, filters, and merged Kubernetes events.',
+      'Tail logs from multiple pods/containers with dynamic discovery, filters, and merged Kubernetes events. ' +
+      'REQUIRED: Provide at least one pod identification method: podName (specific pod), labelSelector (e.g., "app=myapp"), ' +
+      'or ownerKind+ownerName (e.g., Deployment name). For a single pod, prefer kube_logs tool with podName.',
     inputSchema: {
       type: 'object',
       properties: {
+        podName: {
+          type: 'string',
+          description:
+            'Specific pod name to fetch logs from. Can be used alone or combined with other filters. ' +
+            'For single pod logs, consider using kube_logs tool instead.',
+          optional: true,
+        },
         namespace: {
           ...CommonSchemas.namespace,
           description: 'Namespace scope (defaults to current context or "default")',
         },
-        labelSelector: CommonSchemas.labelSelector,
+        labelSelector: {
+          ...CommonSchemas.labelSelector,
+          description:
+            'Label selector to find pods (e.g., "app=myapp,env=prod"). ' +
+            'At least one of: podName, labelSelector, or ownerKind+ownerName must be provided.',
+        },
         ownerKind: {
           type: 'string',
-          description: 'Owner resource kind to select pods from',
+          description:
+            'Owner resource kind to select pods from. Must be used with ownerName. ' +
+            'Example: Use ownerKind="Deployment" and ownerName="my-deployment" to get logs from all pods owned by that deployment.',
           enum: ['Deployment', 'DaemonSet', 'Job'],
           optional: true,
         },
         ownerName: {
           type: 'string',
-          description: 'Owner resource name when ownerKind is provided',
+          description:
+            'Owner resource name when ownerKind is provided. Must be used with ownerKind. ' +
+            'Example: Use ownerKind="Deployment" and ownerName="my-deployment" to get logs from all pods owned by that deployment.',
           optional: true,
         },
         podRegex: {
           type: 'string',
-          description: 'Regex or substring filter applied to pod names',
+          description:
+            'Regex or substring filter applied to pod names (used after pod discovery). ' +
+            'Example: "myapp-.*" to match pods starting with "myapp-". This is a filter, not a discovery method.',
           optional: true,
         },
         containerRegex: {
@@ -138,6 +158,7 @@ export class KubeLogTool implements BaseTool {
 
   async execute(params: any, client: KubernetesClient): Promise<any> {
     const namespace: string = params.namespace || client.getCurrentNamespace() || 'default';
+    const podNameParam: string | undefined = params.podName;
     const ownerKind: OwnerKind | undefined = params.ownerKind;
     const ownerName: string | undefined = params.ownerName;
     const labelSelectorOverride: string | undefined = params.labelSelector;
@@ -163,6 +184,25 @@ export class KubeLogTool implements BaseTool {
     const eventType: 'Normal' | 'Warning' | 'All' = params.eventType || 'All';
     const structure: 'object' | 'text' = params.structure || 'object';
 
+    // Validate that at least one pod identification method is provided
+    if (!podNameParam && !labelSelectorOverride && !(ownerKind && ownerName)) {
+      throw new Error(
+        'At least one pod identification method is required. Provide one of:\n' +
+          '  - podName: specific pod name (e.g., "my-pod-123")\n' +
+          '  - labelSelector: label selector (e.g., "app=myapp")\n' +
+          '  - ownerKind + ownerName: owner resource (e.g., ownerKind="Deployment", ownerName="my-deployment")\n' +
+          'For single pod logs, consider using kube_logs tool with podName parameter.',
+      );
+    }
+
+    // Validate ownerKind and ownerName are used together
+    if ((ownerKind && !ownerName) || (!ownerKind && ownerName)) {
+      throw new Error(
+        'ownerKind and ownerName must be provided together. ' +
+          'Example: {"ownerKind": "Deployment", "ownerName": "my-deployment"}',
+      );
+    }
+
     // One-shot mode: when tailLines is requested and no explicit duration provided
     // One-shot mode: if durationSeconds <= 0, do not wait; return immediately with available logs
     const isOneShot: boolean = !durationSeconds || durationSeconds <= 0;
@@ -173,15 +213,6 @@ export class KubeLogTool implements BaseTool {
     const messageRegex = safeBuildRegex(messageRegexStr);
     const excludeRegex = safeBuildRegex(excludeRegexStr);
 
-    // Resolve label selector from owner if provided
-    const ownerLabelSelector =
-      ownerKind && ownerName
-        ? await this.buildSelectorForOwner(client, namespace, ownerKind, ownerName)
-        : undefined;
-
-    const effectiveLabelSelector =
-      [ownerLabelSelector, labelSelectorOverride].filter(Boolean).join(',') || undefined;
-
     const podOps = new PodOperations(client);
 
     // State
@@ -190,29 +221,105 @@ export class KubeLogTool implements BaseTool {
     const lines: KubeLogLine[] = [];
     let droppedLines = 0;
 
-    // Discovery: initial list
-    const initialList = await podOps.list({
-      namespace,
-      labelSelector: effectiveLabelSelector,
-    });
-    for (const pod of initialList.items || []) {
-      if (!this.podMatches(pod, podRegex)) continue;
-      targetPods.set(pod.metadata?.name || '', pod);
+    // Resolve label selector from owner if provided (needed for both paths)
+    const ownerLabelSelector =
+      ownerKind && ownerName
+        ? await this.buildSelectorForOwner(client, namespace, ownerKind, ownerName)
+        : undefined;
+
+    const effectiveLabelSelector =
+      [ownerLabelSelector, labelSelectorOverride].filter(Boolean).join(',') || undefined;
+
+    // Discovery: If podName is provided, fetch that specific pod
+    if (podNameParam) {
+      try {
+        const pod = await podOps.get(podNameParam, { namespace });
+        if (pod && pod.metadata?.name) {
+          const name = pod.metadata.name;
+          if (!this.podMatches(pod, podRegex)) {
+            throw new Error(
+              `Pod "${name}" found but does not match podRegex filter "${podRegexStr || ''}"`,
+            );
+          }
+          targetPods.set(name, pod);
+        } else {
+          throw new Error(`Pod "${podNameParam}" not found in namespace "${namespace}"`);
+        }
+      } catch (error: any) {
+        const errorMsg = error.response?.body?.message || error.message || 'Unknown error';
+        if (errorMsg.includes('not found')) {
+          throw new Error(
+            `Pod "${podNameParam}" not found in namespace "${namespace}". ` +
+              `Verify the pod name and namespace are correct.`,
+          );
+        }
+        throw new Error(`Failed to fetch pod "${podNameParam}": ${errorMsg}`);
+      }
+    } else {
+      // Discovery via label selector or owner
+      try {
+        const initialList = await podOps.list({
+          namespace,
+          labelSelector: effectiveLabelSelector,
+        });
+        for (const pod of initialList.items || []) {
+          const podName = pod.metadata?.name;
+          if (!podName || !this.podMatches(pod, podRegex)) continue;
+          targetPods.set(podName, pod);
+        }
+      } catch (error: any) {
+        const errorMsg = error.response?.body?.message || error.message || 'Unknown error';
+        throw new Error(`Failed to list pods: ${errorMsg}`);
+      }
+    }
+
+    // Validate that at least one pod was found
+    if (targetPods.size === 0) {
+      const methods = [];
+      if (podNameParam) methods.push(`podName="${podNameParam}"`);
+      if (labelSelectorOverride) methods.push(`labelSelector="${labelSelectorOverride}"`);
+      if (ownerKind && ownerName)
+        methods.push(`ownerKind="${ownerKind}", ownerName="${ownerName}"`);
+      if (podRegexStr) methods.push(`podRegex="${podRegexStr}"`);
+
+      throw new Error(
+        `No pods found matching the provided criteria in namespace "${namespace}".\n` +
+          `Criteria used: ${methods.join(', ')}\n` +
+          `Suggestions:\n` +
+          `  - Verify the namespace is correct\n` +
+          `  - Check that pods exist: use kube_list with resourceType="pod" and the same namespace\n` +
+          `  - If using labelSelector, verify labels match: use kube_get to inspect pod labels\n` +
+          `  - If using ownerKind/ownerName, verify the owner resource exists and has pods`,
+      );
     }
 
     if (isOneShot) {
       // One-shot: fetch last N lines once, don't watch/poll
       const fetchPromises: Promise<void>[] = [];
+      const errors: string[] = [];
       for (const pod of targetPods.values()) {
+        const podName = pod.metadata?.name;
+        if (!podName) {
+          errors.push('Pod found but missing metadata.name');
+          continue;
+        }
         const containers = (pod.spec?.containers || []).map((c) => c.name).filter(Boolean);
+        if (containers.length === 0) {
+          errors.push(`Pod "${podName}" has no containers`);
+          continue;
+        }
         for (const c of containers) {
           if (containerRegex && !containerRegex.test(c)) continue;
           fetchPromises.push(
             (async () => {
               try {
+                if (!podName || !c) {
+                  errors.push(`Invalid pod/container: podName="${podName}", container="${c}"`);
+                  return;
+                }
                 const res = (await client.core.readNamespacedPodLog({
                   namespace,
-                  name: pod.metadata?.name || '',
+                  name: podName,
                   container: c,
                   previous,
                   follow: false,
@@ -222,7 +329,7 @@ export class KubeLogTool implements BaseTool {
                 this.processLogsToLines({
                   logText: res,
                   namespace,
-                  podName: pod.metadata?.name || '',
+                  podName,
                   container: c,
                   includeTimestampsOutput: includeTimestamps,
                   messageRegex,
@@ -231,14 +338,35 @@ export class KubeLogTool implements BaseTool {
                   onLine: (line) => lines.push(line),
                   onLastTimestamp: () => undefined,
                 });
-              } catch {
-                // ignore per-container errors in one-shot
+              } catch (error: any) {
+                const errorMsg = error.response?.body?.message || error.message || 'Unknown error';
+                const containerInfo = `${namespace}/${podName}/${c}`;
+                if (errorMsg.includes('not found')) {
+                  errors.push(`Container "${c}" not found in pod "${podName}"`);
+                } else if (errorMsg.includes('Required parameter name')) {
+                  errors.push(
+                    `Invalid parameters for ${containerInfo}: pod name or container name is missing`,
+                  );
+                } else {
+                  errors.push(`Failed to fetch logs from ${containerInfo}: ${errorMsg}`);
+                }
               }
             })(),
           );
         }
       }
       await Promise.all(fetchPromises);
+
+      // If no logs were fetched and we have errors, throw a helpful error
+      if (lines.length === 0 && errors.length > 0) {
+        throw new Error(
+          `Failed to fetch logs from any container:\n${errors.map((e) => `  - ${e}`).join('\n')}\n` +
+            `Suggestions:\n` +
+            `  - Verify pod names and containers exist\n` +
+            `  - Check container names match (use kube_get to inspect pod spec)\n` +
+            `  - For single pod logs, consider using kube_logs tool instead`,
+        );
+      }
 
       // One-shot events (optional): list events and filter to involved pods
       if (includeEvents) {
@@ -250,9 +378,7 @@ export class KubeLogTool implements BaseTool {
             : since
               ? Date.now() - this.parseDuration(since) * 1000
               : undefined;
-          const podNames = new Set(
-            Array.from(targetPods.values()).map((p) => p.metadata?.name || ''),
-          );
+          const podNames = new Set(targetPods.keys());
           const eventsPerPod: Map<string, any[]> = new Map();
           for (const e of items) {
             const ts = e?.lastTimestamp || e?.eventTime || e?.firstTimestamp;
@@ -318,15 +444,17 @@ export class KubeLogTool implements BaseTool {
 
     // Start log loops for initial pods (streaming mode)
     for (const pod of targetPods.values()) {
+      const podName = pod.metadata?.name;
+      if (!podName) continue;
       const containers = (pod.spec?.containers || []).map((c) => c.name).filter((n) => !!n);
       for (const c of containers) {
         if (containerRegex && !containerRegex.test(c)) continue;
-        const key = `${pod.metadata?.name}|${c}`;
+        const key = `${podName}|${c}`;
         if (!activeLoops.has(key)) {
           const stopper = this.startPollingLogLoop({
             client,
             namespace,
-            podName: pod.metadata?.name || '',
+            podName,
             container: c,
             tailLines,
             since,

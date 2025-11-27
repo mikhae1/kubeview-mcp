@@ -94,6 +94,8 @@ export default [
       'scripts/main.js',
               'bin/setup.js',
       '*.d.ts',
+      'generated/',
+      'workspace/',
     ],
   },
 ];

@@ -2,6 +2,11 @@
 /**
  * Kubernetes MCP Server
  * Main entry point for the Model Context Protocol server
+ *
+ * Modes:
+ * - Standard mode: exposes all Kubernetes, Helm, and Argo tools
+ * - Code mode (NODE_MODE=code): exposes only `run_code` for agent code execution
+ *   per https://www.anthropic.com/engineering/code-execution-with-mcp
  */
 
 import { MCPServer } from './server/MCPServer.js';
@@ -9,37 +14,130 @@ import { KubernetesToolsPlugin } from './plugins/KubernetesToolsPlugin.js';
 import { HelmToolsPlugin } from './plugins/HelmToolsPlugin.js';
 import { ArgoToolsPlugin } from './plugins/ArgoToolsPlugin.js';
 import { ArgoCDToolsPlugin } from './plugins/ArgoCDToolsPlugin.js';
+import { RunCodeTool } from './tools/RunCodeTool.js';
 
 export const VERSION = '0.1.0';
+
+import { loadCodeModeConfig } from './utils/CodeModeConfig.js';
+
+/**
+ * Code-mode bootstrap: minimal surface with only `run_code` tool.
+ * Follows progressive disclosure per Anthropic's MCP code execution approach.
+ * Loads all plugins internally so run_code can execute tool calls.
+ */
+async function startCodeMode(server: MCPServer): Promise<void> {
+  const config = loadCodeModeConfig();
+
+  // Load all plugins internally (not exposed to MCP, but available for code execution)
+  const internalServer = new MCPServer({
+    skipTransportErrorHandling: true,
+    skipGracefulShutdown: true,
+  });
+
+  const kubernetesPlugin = new KubernetesToolsPlugin();
+  await internalServer.loadPlugin(kubernetesPlugin);
+
+  const optionalPlugins = [new HelmToolsPlugin(), new ArgoToolsPlugin(), new ArgoCDToolsPlugin()];
+  for (const plugin of optionalPlugins) {
+    try {
+      await internalServer.loadPlugin(plugin);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Optional plugin '${plugin.name}' skipped: ${message}`);
+    }
+  }
+
+  // Create tool executor that calls internal tools
+  // Strip server prefix from qualified names (e.g., "kubeview-mcp__kube_list" → "kube_list")
+  const toolExecutor = async (qualifiedName: string, args: unknown) => {
+    const toolName = qualifiedName.includes('__')
+      ? qualifiedName.split('__').pop()!
+      : qualifiedName;
+    return internalServer.executeTool(toolName, args);
+  };
+
+  const runCodeTool = new RunCodeTool(config.sandbox);
+  runCodeTool.setToolExecutor(toolExecutor);
+  runCodeTool.setTools(internalServer.getTools());
+
+  server.registerTool(runCodeTool.tool, (params) => runCodeTool.execute(params));
+
+  // Register global.d.ts resource for type definitions
+  server.registerResource({
+    uri: 'file:///sys/global.d.ts',
+    name: 'Global Type Definitions',
+    mimeType: 'application/typescript',
+    text: runCodeTool.generateGlobalDts(),
+  });
+
+  await server.start();
+  console.error(
+    `KubeView MCP v${VERSION} running in code-mode. ` +
+      'Only `run_code` tool exposed; code can call all Kubernetes/Helm/Argo tools.',
+  );
+}
+
+/**
+ * Standard mode: loads all Kubernetes, Helm, Argo, and ArgoCD plugins.
+ */
+async function startStandardMode(server: MCPServer): Promise<void> {
+  const config = loadCodeModeConfig();
+
+  const kubernetesPlugin = new KubernetesToolsPlugin();
+  await server.loadPlugin(kubernetesPlugin);
+
+  const optionalPlugins = [new HelmToolsPlugin(), new ArgoToolsPlugin(), new ArgoCDToolsPlugin()];
+  for (const plugin of optionalPlugins) {
+    try {
+      await server.loadPlugin(plugin);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Optional plugin '${plugin.name}' skipped: ${message}`);
+    }
+  }
+
+  // Set up run_code tool
+  const toolExecutor = async (qualifiedName: string, args: unknown) => {
+    return server.executeTool(qualifiedName, args);
+  };
+
+  const runCodeTool = new RunCodeTool(config.sandbox);
+  runCodeTool.setToolExecutor(toolExecutor);
+
+  // We need to set tools for the description builder.
+  // In standard mode, we can get them from the server after plugins are loaded.
+  // However, server.getTools() returns Tool[], but setTools expects Tool[] which is fine.
+  // But wait, RunCodeTool.setTools uses them to build the manifest for the description.
+  // We should do this before registering the tool so the description is correct?
+  // Actually, we can do it before starting the server.
+  runCodeTool.setTools(server.getTools());
+
+  server.registerTool(runCodeTool.tool, (params) => runCodeTool.execute(params));
+
+  // Register global.d.ts resource for type definitions
+  server.registerResource({
+    uri: 'file:///sys/global.d.ts',
+    name: 'Global Type Definitions',
+    mimeType: 'application/typescript',
+    text: runCodeTool.generateGlobalDts(),
+  });
+
+  await server.start();
+  console.error(`KubeView MCP v${VERSION} running. Waiting for connections...`);
+}
 
 export async function main(): Promise<void> {
   console.error(`Kubernetes MCP Server v${VERSION} - Starting...`);
 
   try {
-    // Create and start the MCP server
     const server = new MCPServer();
+    const isCodeMode = process.env.NODE_MODE === 'code';
 
-    // Load the Kubernetes tools plugin
-    const kubernetesPlugin = new KubernetesToolsPlugin();
-    await server.loadPlugin(kubernetesPlugin);
-
-    // Load optional plugins (do not fail server startup if they are unavailable)
-    const optionalPlugins = [new HelmToolsPlugin(), new ArgoToolsPlugin(), new ArgoCDToolsPlugin()];
-
-    for (const plugin of optionalPlugins) {
-      try {
-        await server.loadPlugin(plugin);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        // Log to stderr so hosts like Claude surface it, but continue startup
-        console.error(`Optional plugin '${plugin.name}' failed to load: ${message}`);
-      }
+    if (isCodeMode) {
+      await startCodeMode(server);
+    } else {
+      await startStandardMode(server);
     }
-
-    // Start the server
-    await server.start();
-
-    console.error('MCP Server is running. Waiting for connections...');
   } catch (error) {
     console.error('Failed to start MCP server:', error);
     process.exit(1);

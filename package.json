@@ -12,7 +12,8 @@
     }
   },
   "bin": {
-    "kubeview-mcp": "./bin/kubeview-mcp.js"
+    "kubeview-mcp": "./bin/kubeview-mcp.js",
+    "kubeview-mcp-code-mode": "./bin/kubeview-mcp-code-mode.js"
   },
   "files": [
     "bin/",
@@ -26,6 +27,7 @@
     "dev": "tsx --watch src/cli/cli.ts",
     "start": "tsc && node bin/kubeview-mcp.js",
     "setup": "node bin/setup.js",
+    "code-mode": "node bin/kubeview-mcp-code-mode.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint . --ext .ts",
@@ -73,6 +75,7 @@
   "dependencies": {
     "@kubernetes/client-node": "^1.3.0",
     "@modelcontextprotocol/sdk": "^1.17.1",
+    "isolated-vm": "^6.0.2",
     "winston": "^3.17.0",
     "zod": "^3.25.36"
   },

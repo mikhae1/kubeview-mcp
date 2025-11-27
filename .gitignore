@@ -38,3 +38,8 @@ tasks/
 .roomodes
 .*rules*
 scripts/task*
+
+# Code-mode artifacts
+generated/
+workspace/
+kube-mcp.code-mode.json

@@ -123,7 +123,57 @@ export class MCPServer {
       this.setupGracefulShutdown();
     }
 
+    if (process.env.NODE_MODE !== 'code') {
+      this.registerBuiltInTools();
+    }
+
     this.logger.info('MCPServer initialized');
+  }
+
+  private registerBuiltInTools(): void {
+    const searchTool: Tool = {
+      name: 'search_tools',
+      description: 'Search registered tools by name or description.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search query applied to tool names and descriptions.',
+          },
+          limit: {
+            type: 'integer',
+            description: 'Maximum number of tools to return.',
+            minimum: 1,
+            default: 10,
+          },
+        },
+        required: ['query'],
+      },
+    };
+
+    this.registerTool(searchTool, async (params: { query: string; limit?: number }) => {
+      const query = params.query?.toLowerCase() ?? '';
+      const limit = Math.min(Math.max(params.limit ?? 10, 1), 50);
+      const matches = Array.from(this.tools.values())
+        .map((entry) => entry.tool)
+        .filter((tool) => {
+          const nameMatch = tool.name.toLowerCase().includes(query);
+          const descriptionMatch = (tool.description ?? '').toLowerCase().includes(query);
+          return nameMatch || descriptionMatch;
+        })
+        .slice(0, limit)
+        .map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        }));
+
+      return {
+        total: matches.length,
+        tools: matches,
+      };
+    });
   }
 
   /**
@@ -321,13 +371,24 @@ export class MCPServer {
 
       this.logger.info(`Reading resource: ${request.params.uri}`);
 
-      // This is a placeholder - actual resource reading logic would go here
+      // If the resource has text content directly attached (custom extension for this server)
+      // or if we store content in a separate map.
+      // For now, let's assume we might extend the Resource type or store it separately.
+      // But wait, the Resource interface from SDK doesn't have 'text'.
+      // We should probably store the content in a separate map or extend the type locally.
+      // Let's check how we register it.
+
+      // Since we are defining the server, we can cast it or look it up.
+      // Let's assume we store content in a parallel map or cast to any.
+      const content = (resource as any).text || `Resource content for ${request.params.uri}`;
+
       return {
         contents: [
           {
             type: 'text',
-            text: `Resource content for ${request.params.uri}`,
+            text: content,
             uri: request.params.uri,
+            mimeType: resource.mimeType,
           },
         ],
       };
@@ -364,6 +425,24 @@ export class MCPServer {
 
     this.tools.set(tool.name, { tool, handler });
     this.logger.info(`Registered tool: ${tool.name}`);
+  }
+
+  /**
+   * Get all registered tools
+   */
+  public getTools(): Tool[] {
+    return Array.from(this.tools.values()).map((t) => t.tool);
+  }
+
+  /**
+   * Execute a tool directly (for internal use, e.g., from run_code sandbox)
+   */
+  public async executeTool(toolName: string, params: unknown): Promise<unknown> {
+    const toolEntry = this.tools.get(toolName);
+    if (!toolEntry) {
+      throw new Error(`Tool not found: ${toolName}`);
+    }
+    return toolEntry.handler(params);
   }
 
   /**
