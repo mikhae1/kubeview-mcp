@@ -10,7 +10,16 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 // Tell Jest to use the manual mock
-jest.mock('@kubernetes/client-node');
+// Tell Jest to use the manual mock
+jest.mock('@kubernetes/client-node', () => {
+  return {
+    KubeConfig: jest.fn(),
+    CoreV1Api: jest.fn(),
+    AppsV1Api: jest.fn(),
+    BatchV1Api: jest.fn(),
+    NetworkingV1Api: jest.fn(),
+  };
+});
 jest.mock('fs');
 
 describe('KubernetesClient', () => {
