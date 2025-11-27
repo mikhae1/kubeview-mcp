@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-11-27
+
+### Added
+- **Code-Mode Execution**: Added sandboxed TypeScript code execution runtime following Anthropic's code execution with MCP approach
+- **RunCodeTool**: Implemented `run_code` tool for executing TypeScript code in a sandboxed Node.js VM environment
+- **Code-Mode CLI**: Added `kubeview-mcp-code-mode` binary and `npm run code-mode` script for standalone code execution
+- **TypeScript Transpilation**: Integrated TypeScript compiler for runtime transpilation of agent code (ES2022 target)
+- **Global Type Definitions**: Added `/sys/global.d.ts` resource providing TypeScript type definitions for all available tools
+- **Tool Executor**: Implemented tool executor allowing sandboxed code to call MCP tools internally
+- **Helper Functions**: Added `callMCPTool()`, `searchTools()`, and `getToolHelp()` helper functions for progressive tool discovery
+- **Code-Mode Configuration**: Added `CodeModeConfig` with configurable sandbox limits (memory, timeout) and workspace settings
+- **Dual Mode Support**: Added `NODE_MODE=code` environment variable to run server in code-mode (exposes only `run_code` tool)
+
+### Changed
+- **Plugin Architecture**: Removed version property from various tools plugins and MCPServer for simplified plugin management
+- **Dependencies**: Added TypeScript as a runtime dependency (previously dev-only) for code-mode transpilation
+- **Tool Manifest**: Enhanced tool manifest system to support dynamic tool generation for agent code execution
+
+### Fixed
+- **Type Definitions**: Fixed TypeScript typing for generated global DTS resources and resource registration
+
 ## [1.2.0] - 2025-08-19
 
 ### Changed

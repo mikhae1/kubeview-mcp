@@ -73,7 +73,7 @@ async function startCodeMode(server: MCPServer): Promise<void> {
 
   await server.start();
   console.error(
-    `KubeView MCP v${VERSION} running in code-mode. ` +
+    `KubeView MCP is running in code-mode. ` +
       'Only `run_code` tool exposed; code can call all Kubernetes/Helm/Argo tools.',
   );
 }
@@ -124,11 +124,11 @@ async function startStandardMode(server: MCPServer): Promise<void> {
   } as Resource & { text: string });
 
   await server.start();
-  console.error(`KubeView MCP v${VERSION} running. Waiting for connections...`);
+  console.error(`KubeView MCP is running. Waiting for connections...`);
 }
 
 export async function main(): Promise<void> {
-  console.error(`Kubernetes MCP Server v${VERSION} - Starting...`);
+  console.error(`Kubernetes MCP Server - Starting...`);
 
   try {
     const server = new MCPServer();
