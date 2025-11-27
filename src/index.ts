@@ -9,6 +9,7 @@
  *   per https://www.anthropic.com/engineering/code-execution-with-mcp
  */
 
+import { Resource } from '@modelcontextprotocol/sdk/types.js';
 import { MCPServer } from './server/MCPServer.js';
 import { KubernetesToolsPlugin } from './plugins/KubernetesToolsPlugin.js';
 import { HelmToolsPlugin } from './plugins/HelmToolsPlugin.js';
@@ -68,7 +69,7 @@ async function startCodeMode(server: MCPServer): Promise<void> {
     name: 'Global Type Definitions',
     mimeType: 'application/typescript',
     text: runCodeTool.generateGlobalDts(),
-  });
+  } as Resource & { text: string });
 
   await server.start();
   console.error(
@@ -120,7 +121,7 @@ async function startStandardMode(server: MCPServer): Promise<void> {
     name: 'Global Type Definitions',
     mimeType: 'application/typescript',
     text: runCodeTool.generateGlobalDts(),
-  });
+  } as Resource & { text: string });
 
   await server.start();
   console.error(`KubeView MCP v${VERSION} running. Waiting for connections...`);
