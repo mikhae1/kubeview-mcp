@@ -1,7 +1,12 @@
 import vm from 'node:vm';
 import { promises as fs } from 'fs';
 import path from 'path';
-import type { MCPBridge } from '../../bridge/MCPBridge.js';
+import {
+  getToolNamespace,
+  toCamelCase,
+  formatToolAccessor,
+} from '../../../utils/toolNamespaces.js';
+import type { MCPBridge, ToolRegistration } from '../../bridge/MCPBridge.js';
 import { NodeVmCodeExecutor } from '../code-executor/NodeVmCodeExecutor.js';
 import type { SandboxOptions, SandboxRuntime } from '../types.js';
 
@@ -50,8 +55,8 @@ export class VmSandboxManager implements SandboxRuntime {
 
     await this.bootstrapConsole();
     await this.bootstrapCallTool();
-    await this.bootstrapWorkspaceFs();
-    await this.bootstrapToolHelpers();
+    await this.bootstrapFsNamespace();
+    await this.bootstrapToolsNamespace();
 
     this.initialized = true;
   }
@@ -109,7 +114,7 @@ export class VmSandboxManager implements SandboxRuntime {
     });
   }
 
-  private async bootstrapWorkspaceFs(): Promise<void> {
+  private async bootstrapFsNamespace(): Promise<void> {
     if (!this.context) {
       throw new Error('Sandbox not initialized');
     }
@@ -138,6 +143,13 @@ export class VmSandboxManager implements SandboxRuntime {
       configurable: false,
       enumerable: false,
     });
+
+    this.context.fs = {
+      readFile: api.readFile,
+      writeFile: api.writeFile,
+      listDir: api.listDir,
+      exists: api.exists,
+    };
   }
 
   private resolveWorkspacePath(root: string, targetPath: string | undefined): string {
@@ -149,32 +161,51 @@ export class VmSandboxManager implements SandboxRuntime {
   }
 
   /**
-   * Bootstrap tool helper functions into the sandbox context.
-   * This injects typed helpers for all registered MCP tools.
+   * Bootstrap the namespaced tools helper into the sandbox context.
    */
-  private async bootstrapToolHelpers(): Promise<void> {
+  private async bootstrapToolsNamespace(): Promise<void> {
     if (!this.context) {
       throw new Error('Sandbox not initialized');
     }
 
-    const tools = this.bridge.getRegisteredTools();
-    const servers = this.bridge.listServers();
-
-    // Inject tool metadata
+    const tools: ToolRegistration[] = this.bridge.getRegisteredTools();
     const toolMetadata = tools.map((t) => ({
       server: t.server,
       name: t.toolName,
+      camelName: toCamelCase(t.toolName),
       qualifiedName: t.qualifiedName,
       description: t.tool.description,
+      schema: t.tool.inputSchema,
     }));
 
-    // Helper functions
-    this.context.listServers = () => servers;
-    this.context.listTools = (server?: string) => {
-      if (!server) return toolMetadata;
-      return toolMetadata.filter((t) => t.server === server);
+    const callTool = this.context.__callMCPTool as (
+      name: string,
+      args: unknown,
+    ) => Promise<unknown>;
+
+    const namespaces: Record<string, Record<string, (input: unknown) => Promise<unknown>>> = {
+      kubernetes: {},
+      helm: {},
+      argo: {},
+      argocd: {},
+      other: {},
     };
-    this.context.searchTools = (query: string, limit = 10) => {
+
+    for (const tool of tools) {
+      const { namespace, methodName } = getToolNamespace(tool.toolName);
+      namespaces[namespace][methodName] = (input: unknown) =>
+        callTool(tool.qualifiedName, input ?? {});
+    }
+
+    const list = (server?: string) => {
+      const filtered = server ? toolMetadata.filter((t) => t.server === server) : toolMetadata;
+      return filtered.map((t) => ({
+        ...t,
+        name: formatToolAccessor(t.name),
+      }));
+    };
+
+    const search = (query: string, limit = 10) => {
       const q = (query || '').toLowerCase();
       return toolMetadata
         .filter(
@@ -184,18 +215,79 @@ export class VmSandboxManager implements SandboxRuntime {
         .slice(0, limit);
     };
 
-    // Inject typed tool wrapper functions
-    const callTool = this.context.__callMCPTool as (
-      name: string,
-      args: unknown,
-    ) => Promise<unknown>;
-    for (const tool of tools) {
-      const fnName = this.toCamelCase(tool.toolName);
-      this.context[fnName] = (input: unknown) => callTool(tool.qualifiedName, input ?? {});
-    }
+    const help = (toolName: string) => {
+      if (!toolName) return null;
+      const normalized = toolName.replace(/([A-Z])/g, '_$1').toLowerCase();
+      const match = toolMetadata.find(
+        (tool) =>
+          tool.name === normalized ||
+          tool.name === toolName ||
+          tool.camelName === toolName ||
+          tool.camelName === toCamelCase(toolName),
+      );
+
+      if (!match) {
+        return null;
+      }
+
+      const registration = tools.find((t) => t.qualifiedName === match.qualifiedName);
+      const parameters = registration ? this.buildParameterDocs(registration.tool.inputSchema) : [];
+
+      return {
+        name: match.name,
+        qualifiedName: match.qualifiedName,
+        description: match.description,
+        parameters,
+      };
+    };
+
+    this.context.tools = {
+      kubernetes: namespaces.kubernetes,
+      helm: namespaces.helm,
+      argo: namespaces.argo,
+      argocd: namespaces.argocd,
+      other: namespaces.other,
+      list,
+      search,
+      help,
+      call: (qualifiedName: string, args?: Record<string, unknown>) =>
+        callTool(qualifiedName, args ?? {}),
+      servers: () => this.bridge.listServers(),
+    };
   }
 
-  private toCamelCase(name: string): string {
-    return name.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+  private buildParameterDocs(schema: any): Array<{
+    name: string;
+    type: string;
+    required: boolean;
+    description?: string;
+  }> {
+    if (!schema || schema.type !== 'object' || !schema.properties) {
+      return [];
+    }
+
+    return Object.entries(schema.properties).map(([name, prop]) => {
+      const typed = prop as { description?: string; type?: string };
+      return {
+        name,
+        required: Array.isArray(schema.required) ? schema.required.includes(name) : false,
+        type: this.schemaTypeFromJson(typed),
+        description: typed.description,
+      };
+    });
+  }
+
+  private schemaTypeFromJson(schema: any): string {
+    if (!schema) return 'any';
+    if (schema.type === 'array') {
+      return `${this.schemaTypeFromJson(schema.items)}[]`;
+    }
+    if (schema.type === 'object') {
+      return 'object';
+    }
+    if (Array.isArray(schema.enum)) {
+      return schema.enum.map((value: string) => `'${value}'`).join(' | ');
+    }
+    return schema.type ?? 'any';
   }
 }

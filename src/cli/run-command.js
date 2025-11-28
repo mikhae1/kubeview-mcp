@@ -53,54 +53,70 @@ function createRunCodeToolForCLI() {
   const allTools = [];
 
   // Add Kubernetes tools
-  const { CommonSchemas, BaseTool, ...kubernetesToolClasses } = KubernetesToolClasses;
-  for (const [exportName, ToolClass] of Object.entries(kubernetesToolClasses)) {
+  // eslint-disable-next-line no-unused-vars
+  const { CommonSchemas: _CommonSchemas, BaseTool: _BaseTool, ...kubernetesToolClasses } = KubernetesToolClasses;
+  // eslint-disable-next-line no-unused-vars
+  for (const [_exportName, ToolClass] of Object.entries(kubernetesToolClasses)) {
     if (typeof ToolClass === 'function') {
       try {
         const instance = new ToolClass();
         if (instance.tool) {
           allTools.push(instance.tool);
         }
-      } catch {}
+      } catch {
+        // Ignore instantiation errors
+      }
     }
   }
 
   // Add Helm tools
-  const { HelmCommonSchemas, HelmBaseTool, ...helmToolClasses } = HelmToolClasses;
-  for (const [exportName, ToolClass] of Object.entries(helmToolClasses)) {
+  // eslint-disable-next-line no-unused-vars
+  const { HelmCommonSchemas: _HelmCommonSchemas, HelmBaseTool: _HelmBaseTool, ...helmToolClasses } = HelmToolClasses;
+  // eslint-disable-next-line no-unused-vars
+  for (const [_exportName, ToolClass] of Object.entries(helmToolClasses)) {
     if (typeof ToolClass === 'function') {
       try {
         const instance = new ToolClass();
         if (instance.tool) {
           allTools.push(instance.tool);
         }
-      } catch {}
+      } catch {
+        // Ignore instantiation errors
+      }
     }
   }
 
   // Add Argo tools
-  const { ArgoCommonSchemas, ...argoToolClasses } = ArgoToolClasses;
-  for (const [exportName, ToolClass] of Object.entries(argoToolClasses)) {
+  // eslint-disable-next-line no-unused-vars
+  const { ArgoCommonSchemas: _ArgoCommonSchemas, ...argoToolClasses } = ArgoToolClasses;
+  // eslint-disable-next-line no-unused-vars
+  for (const [_exportName, ToolClass] of Object.entries(argoToolClasses)) {
     if (typeof ToolClass === 'function') {
       try {
         const instance = new ToolClass();
         if (instance.tool) {
           allTools.push(instance.tool);
         }
-      } catch {}
+      } catch {
+        // Ignore instantiation errors
+      }
     }
   }
 
   // Add ArgoCD tools
-  const { ArgoCDCommonSchemas, ...argoCDToolClasses } = ArgoCDToolClasses;
-  for (const [exportName, ToolClass] of Object.entries(argoCDToolClasses)) {
+  // eslint-disable-next-line no-unused-vars
+  const { ArgoCDCommonSchemas: _ArgoCDCommonSchemas, ...argoCDToolClasses } = ArgoCDToolClasses;
+  // eslint-disable-next-line no-unused-vars
+  for (const [_exportName, ToolClass] of Object.entries(argoCDToolClasses)) {
     if (typeof ToolClass === 'function') {
       try {
         const instance = new ToolClass();
         if (instance.tool) {
           allTools.push(instance.tool);
         }
-      } catch {}
+      } catch {
+        // Ignore instantiation errors
+      }
     }
   }
 
@@ -388,7 +404,9 @@ function showGeneralHelp() {
   console.log('  npm run command help <command_name>');
   console.log('\nExamples:');
   console.log('  # Code execution');
-  console.log('  npm run command -- run_code --code="console.log(await kubeList({}));"');
+  console.log(
+    '  npm run command -- run_code --code="console.log(await tools.kubernetes.list({}));"',
+  );
   console.log('  # Kubernetes');
   console.log('  npm run command -- get_pods');
   console.log('  npm run command -- get_metrics --namespace=kube-system');

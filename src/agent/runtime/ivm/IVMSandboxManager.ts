@@ -2,6 +2,7 @@ import ivm from 'isolated-vm';
 import { promises as fs } from 'fs';
 import path from 'path';
 import type { MCPBridge } from '../../bridge/MCPBridge.js';
+import { getToolNamespace, toCamelCase } from '../../../utils/toolNamespaces.js';
 import { CodeExecutor } from '../code-executor/CodeExecutor.js';
 import type { SandboxOptions, SandboxRuntime } from '../types.js';
 
@@ -74,6 +75,7 @@ export class IVMSandboxManager implements SandboxRuntime {
     await this.bootstrapConsole();
     await this.bootstrapCallTool();
     await this.bootstrapWorkspaceFs();
+    await this.bootstrapToolsNamespace();
 
     this.initialized = true;
   }
@@ -211,6 +213,13 @@ export class IVMSandboxManager implements SandboxRuntime {
               result: { promise: true },
             }),
         };
+
+        globalThis.fs = {
+          readFile: (path) => globalThis.__workspaceFs.readFile(path),
+          writeFile: (path, data) => globalThis.__workspaceFs.writeFile(path, data),
+          listDir: (path) => globalThis.__workspaceFs.listDir(path),
+          exists: (path) => globalThis.__workspaceFs.exists(path),
+        };
       `,
       { timeout: this.timeout },
     );
@@ -222,5 +231,141 @@ export class IVMSandboxManager implements SandboxRuntime {
       throw new Error('Workspace access outside of root is not allowed');
     }
     return candidate;
+  }
+
+  private async bootstrapToolsNamespace(): Promise<void> {
+    if (!this.context || !this.isolate) {
+      throw new Error('Sandbox not initialized');
+    }
+
+    const registrations = this.bridge.getRegisteredTools();
+    const entries = registrations.map((tool) => {
+      const { namespace, methodName } = getToolNamespace(tool.toolName);
+      return {
+        server: tool.server,
+        name: tool.toolName,
+        camelName: toCamelCase(tool.toolName),
+        qualifiedName: tool.qualifiedName,
+        description: tool.tool.description,
+        namespace,
+        methodName,
+        parameters: this.buildParameterDocs(tool.tool.inputSchema),
+      };
+    });
+
+    const copy = new ivm.ExternalCopy(entries);
+    await this.context.global.set('__toolNamespaceConfig', copy.copyInto());
+    copy.release?.();
+
+    await this.context.eval(
+      `
+        (() => {
+          const entries = globalThis.__toolNamespaceConfig || [];
+          const namespaces = {
+            kubernetes: {},
+            helm: {},
+            argo: {},
+            argocd: {},
+            other: {},
+          };
+
+          for (const entry of entries) {
+            if (!namespaces[entry.namespace]) namespaces[entry.namespace] = {};
+            namespaces[entry.namespace][entry.methodName] = (args) =>
+              globalThis.__callMCPTool(entry.qualifiedName, args ?? {});
+          }
+
+          const summaries = entries.map(
+            ({ server, name, qualifiedName, description, camelName, parameters, namespace, methodName }) => ({
+              server,
+              name: 'tools.' + namespace + '.' + methodName,
+              qualifiedName,
+              description,
+              camelName,
+              parameters: parameters ?? [],
+            }),
+          );
+
+          const camelCase = (value) =>
+            value.replace(/_([a-zA-Z0-9])/g, (_, c) => (c ? c.toUpperCase() : ''));
+
+          const findTool = (toolName) => {
+            if (!toolName) return undefined;
+            const normalized = toolName.replace(/([A-Z])/g, '_$1').toLowerCase();
+            return summaries.find(
+              (tool) =>
+                tool.name === normalized ||
+                tool.name === toolName ||
+                tool.camelName === toolName ||
+                tool.camelName === camelCase(toolName),
+            );
+          };
+
+          globalThis.tools = {
+            kubernetes: namespaces.kubernetes,
+            helm: namespaces.helm,
+            argo: namespaces.argo,
+            argocd: namespaces.argocd,
+            other: namespaces.other,
+            list: (server) => (server ? summaries.filter((t) => t.server === server) : summaries),
+            search: (query, limit = 10) => {
+              const q = (query || '').toLowerCase();
+              return summaries
+                .filter(
+                  (t) =>
+                    t.name.toLowerCase().includes(q) ||
+                    (t.description ?? '').toLowerCase().includes(q),
+                )
+                .slice(0, limit);
+            },
+            help: (toolName) => {
+              const tool = findTool(toolName);
+              if (!tool) return null;
+              return {
+                name: tool.name,
+                qualifiedName: tool.qualifiedName,
+                description: tool.description,
+                parameters: tool.parameters,
+              };
+            },
+            call: (qualifiedName, args) => globalThis.__callMCPTool(qualifiedName, args ?? {}),
+            servers: () => Array.from(new Set(summaries.map((t) => t.server))),
+          };
+        })();
+      `,
+      { timeout: this.timeout },
+    );
+  }
+
+  private buildParameterDocs(schema: any): Array<{
+    name: string;
+    type: string;
+    required: boolean;
+    description?: string;
+  }> {
+    if (!schema || schema.type !== 'object' || !schema.properties) {
+      return [];
+    }
+
+    return Object.entries(schema.properties).map(([name, prop]) => ({
+      name,
+      required: Array.isArray(schema.required) ? schema.required.includes(name) : false,
+      description: (prop as any)?.description,
+      type: this.schemaTypeFromJson(prop),
+    }));
+  }
+
+  private schemaTypeFromJson(schema: any): string {
+    if (!schema) return 'any';
+    if (schema.type === 'array') {
+      return `${this.schemaTypeFromJson(schema.items)}[]`;
+    }
+    if (schema.type === 'object') {
+      return 'object';
+    }
+    if (Array.isArray(schema.enum)) {
+      return schema.enum.map((value: string) => `'${value}'`).join(' | ');
+    }
+    return schema.type ?? 'any';
   }
 }

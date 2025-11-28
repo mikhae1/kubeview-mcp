@@ -1,3 +1,4 @@
+import { formatToolAccessor } from '../../utils/toolNamespaces.js';
 import type {
   ToolSchemaSummary,
   NormalizedSchema,
@@ -60,9 +61,9 @@ export class ToolDescriptionBuilder {
       for (let i = 0; i < serverTools.length; i++) {
         const tool = serverTools[i];
         const prefix = i === serverTools.length - 1 ? '└── ' : '├── ';
-        const fn = this.toCamelCase(tool.toolName);
+        const accessor = formatToolAccessor(tool.toolName);
         const shortDesc = this.truncate(tool.description, 50);
-        lines.push(`  ${prefix}${fn}()${shortDesc ? ' - ' + shortDesc : ''}`);
+        lines.push(`  ${prefix}${accessor}()${shortDesc ? ' - ' + shortDesc : ''}`);
       }
     }
 
@@ -91,7 +92,7 @@ export class ToolDescriptionBuilder {
     const params = this.extractParameters(tool.inputSchema);
     return {
       name: tool.toolName,
-      camelName: this.toCamelCase(tool.toolName),
+      camelName: formatToolAccessor(tool.toolName),
       description: tool.description ?? '',
       parameters: params,
       examples: this.generateExamples(tool),
@@ -119,12 +120,12 @@ export class ToolDescriptionBuilder {
       paramStr += `, ...`; // indicate more params
     }
 
-    const fn = this.toCamelCase(tool.toolName);
-    const signature = params.length > 0 ? `${fn}({ ${paramStr} })` : `${fn}()`;
+    const accessor = formatToolAccessor(tool.toolName);
+    const signature = params.length > 0 ? `${accessor}({ ${paramStr} })` : `${accessor}()`;
 
     return {
       name: tool.toolName,
-      camelName: fn,
+      camelName: accessor,
       signature: hiddenCount > 0 ? `${signature} // +${hiddenCount} params` : signature,
       shortDescription: this.truncate(tool.description, 60),
       hiddenParamCount: hiddenCount,
@@ -183,23 +184,23 @@ export class ToolDescriptionBuilder {
 
   private generateExamples(tool: ToolSchemaSummary): Example[] {
     const examples: Example[] = [];
-    const fn = this.toCamelCase(tool.toolName);
+    const accessor = formatToolAccessor(tool.toolName);
     const params = this.extractParameters(tool.inputSchema);
     const paramNames = new Set(params.map((p) => p.name));
 
     // Generate contextual examples based on tool patterns
     if (tool.toolName.includes('list')) {
-      examples.push({ description: 'List all', code: `await ${fn}({})` });
+      examples.push({ description: 'List all', code: `await ${accessor}({})` });
       if (paramNames.has('namespace')) {
         examples.push({
           description: 'Filter by namespace',
-          code: `await ${fn}({ namespace: 'default' })`,
+          code: `await ${accessor}({ namespace: 'default' })`,
         });
       }
       if (paramNames.has('allNamespaces')) {
         examples.push({
           description: 'All namespaces',
-          code: `await ${fn}({ allNamespaces: true })`,
+          code: `await ${accessor}({ allNamespaces: true })`,
         });
       }
     } else if (tool.toolName.includes('get')) {
@@ -210,28 +211,28 @@ export class ToolDescriptionBuilder {
           : 'kind';
       examples.push({
         description: 'Get resource',
-        code: `await ${fn}({ ${nameParam}: 'my-resource' })`,
+        code: `await ${accessor}({ ${nameParam}: 'my-resource' })`,
       });
     } else if (tool.toolName.includes('log')) {
       examples.push({
         description: 'Tail logs',
-        code: `await ${fn}({ podName: 'my-pod', tailLines: 100 })`,
+        code: `await ${accessor}({ podName: 'my-pod', tailLines: 100 })`,
       });
     } else if (tool.toolName.includes('exec')) {
       examples.push({
         description: 'Execute command',
-        code: `await ${fn}({ podName: 'my-pod', namespace: 'default', command: ['ls', '-la'] })`,
+        code: `await ${accessor}({ podName: 'my-pod', namespace: 'default', command: ['ls', '-la'] })`,
       });
     } else if (tool.toolName.includes('metrics')) {
       examples.push({
         description: 'Get metrics',
-        code: `await ${fn}({})`,
+        code: `await ${accessor}({})`,
       });
     }
 
     // Fallback
     if (examples.length === 0) {
-      examples.push({ description: 'Basic usage', code: `await ${fn}({})` });
+      examples.push({ description: 'Basic usage', code: `await ${accessor}({})` });
     }
 
     return examples;
@@ -249,9 +250,5 @@ export class ToolDescriptionBuilder {
   private truncate(text?: string, maxLen = 50): string {
     if (!text) return '';
     return text.length > maxLen ? text.slice(0, maxLen - 3) + '...' : text;
-  }
-
-  private toCamelCase(name: string): string {
-    return name.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
   }
 }

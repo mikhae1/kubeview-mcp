@@ -47,8 +47,8 @@ describe('ToolDescriptionBuilder', () => {
     it('generates tree structure grouped by server', () => {
       const tree = builder.buildOverviewTree(mockTools);
       expect(tree).toContain('/test-server/');
-      expect(tree).toContain('listItems()');
-      expect(tree).toContain('getItem()');
+      expect(tree).toContain('tools.other.listItems()');
+      expect(tree).toContain('tools.other.getItem()');
       expect(tree).toContain('├──');
       expect(tree).toContain('└──');
     });
@@ -65,7 +65,7 @@ describe('ToolDescriptionBuilder', () => {
       expect(signatures).toHaveLength(2);
 
       const listSig = signatures.find((s) => s.name === 'list_items');
-      expect(listSig?.camelName).toBe('listItems');
+      expect(listSig?.camelName).toBe('tools.other.listItems');
       expect(listSig?.signature).toContain('namespace?');
       expect(listSig?.signature).toContain('string');
     });
@@ -88,7 +88,7 @@ describe('ToolDescriptionBuilder', () => {
     it('includes all parameters with docs', () => {
       const help = builder.buildDetailedHelp(mockTools[0]);
       expect(help.name).toBe('list_items');
-      expect(help.camelName).toBe('listItems');
+      expect(help.camelName).toBe('tools.other.listItems');
       expect(help.parameters).toHaveLength(3);
 
       const nsParam = help.parameters.find((p) => p.name === 'namespace');
@@ -106,14 +106,14 @@ describe('ToolDescriptionBuilder', () => {
     it('generates contextual examples', () => {
       const help = builder.buildDetailedHelp(mockTools[0]);
       expect(help.examples.length).toBeGreaterThan(0);
-      expect(help.examples.some((e) => e.code.includes('listItems'))).toBe(true);
+      expect(help.examples.some((e) => e.code.includes('tools.other.listItems'))).toBe(true);
     });
   });
 
   describe('formatSignaturesBlock', () => {
     it('formats with custom indent', () => {
       const block = builder.formatSignaturesBlock(mockTools, '    ');
-      expect(block).toMatch(/^ {4}listItems/m);
+      expect(block).toMatch(/^ {4}tools\.other\.listItems/m);
     });
   });
 
@@ -135,7 +135,7 @@ describe('ToolDescriptionBuilder', () => {
       };
 
       const sig = builder.buildSignatures([toolWithoutSchema])[0];
-      expect(sig.signature).toBe('noSchema()');
+      expect(sig.signature).toBe('tools.other.noSchema()');
 
       const help = builder.buildDetailedHelp(toolWithoutSchema);
       expect(help.parameters).toEqual([]);

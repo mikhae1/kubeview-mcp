@@ -4,16 +4,20 @@ import os from 'os';
 import { RunCodeTool } from '../../src/tools/RunCodeTool.js';
 
 describe('RunCodeTool', () => {
-  it('executes code and captures console output', async () => {
+  it('executes code and returns values', async () => {
     const tool = new RunCodeTool(undefined, '/path/does/not/exist');
     const response = await tool.execute({
-      code: 'console.log("hello code-mode")',
+      code: `
+        console.log({ status: 'ok' });
+        return { hello: 'code-mode' };
+      `,
     });
 
-    expect(response.content).toHaveLength(1);
-    const payload = JSON.parse(response.content[0].text);
+    const payload = response as any;
     expect(payload.success).toBe(true);
-    expect(payload.stdout).toContain('hello code-mode');
+    expect(payload.result).toEqual({ hello: 'code-mode' });
+    // stdout is only included when success is false or result is empty (per implementation)
+    expect(payload.stdout).toBeUndefined();
   });
 
   it('reports errors when code fails', async () => {
@@ -22,10 +26,9 @@ describe('RunCodeTool', () => {
       code: 'throw new Error("test error")',
     });
 
-    expect(response.content).toHaveLength(1);
-    const payload = JSON.parse(response.content[0].text);
+    const payload = response as any;
     expect(payload.success).toBe(false);
-    expect(payload.error).toContain('test error');
+    expect(payload.error.message).toContain('test error');
   });
 
   it('generates tool helpers from manifest', async () => {
@@ -52,13 +55,12 @@ describe('RunCodeTool', () => {
     );
 
     const tool = new RunCodeTool(undefined, manifestPath);
-    // Check fooBar appears in the API reference under Other category
-    expect(tool.tool.description).toContain('fooBar(');
+    // Description highlights returning data with items property
+    expect(tool.tool.description).toContain('pods.items');
 
     // Check that the helper function exists in generated code
-    const response = await tool.execute({ code: 'console.log(typeof fooBar)' });
-    const payload = JSON.parse(response.content[0].text);
-    expect(payload.stdout).toContain('function');
+    const response = await tool.execute({ code: 'return typeof tools.other.fooBar;' });
+    expect((response as any).result).toBe('function');
 
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -73,31 +75,32 @@ describe('RunCodeTool', () => {
   it('includes quick start examples in description', async () => {
     const tool = new RunCodeTool(undefined, '/path/does/not/exist');
     expect(tool.tool.description).toContain('Quick Start');
-    expect(tool.tool.description).toContain('kubeList');
-    expect(tool.tool.description).toContain('searchTools');
+    expect(tool.tool.description).toContain('tools.kubernetes');
+    expect(tool.tool.description).toContain('tools.search');
   });
 
   it('can call tools when executor is set', async () => {
     const tool = new RunCodeTool(undefined, '/path/does/not/exist');
 
-    // Mock tool executor
+    // Mock tool executor - returns standard Kubernetes format
     const mockExecutor = jest.fn().mockResolvedValue({ items: ['pod1', 'pod2'] });
     tool.setToolExecutor(mockExecutor);
 
     const response = await tool.execute({
       code: `
-        const result = await callMCPTool('test__tool', { arg: 'value' });
-        console.log(JSON.stringify(result));
+        const result = await tools.call('test__tool', { arg: 'value' });
+        return result;
       `,
     });
 
-    const payload = JSON.parse(response.content[0].text);
+    const payload = response as any;
     expect(payload.success).toBe(true);
-    expect(payload.stdout).toContain('pod1');
+    // unwrapResult preserves { items: [...] } format when items already exists
+    expect(payload.result).toEqual({ items: ['pod1', 'pod2'] });
     expect(mockExecutor).toHaveBeenCalledWith('test__tool', { arg: 'value' });
   });
 
-  it('provides searchTools helper for discovery', async () => {
+  it('provides tools.search helper for discovery', async () => {
     const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'run-code-tool-'));
     const manifestPath = path.join(tmpDir, 'manifest.json');
     writeFileSync(
@@ -116,20 +119,19 @@ describe('RunCodeTool', () => {
     const tool = new RunCodeTool(undefined, manifestPath);
     const response = await tool.execute({
       code: `
-        const results = searchTools('pods');
-        console.log(JSON.stringify(results));
+        return tools.search('pods');
       `,
     });
 
-    const payload = JSON.parse(response.content[0].text);
+    const payload = response as any;
     expect(payload.success).toBe(true);
-    const searchResults = JSON.parse(payload.stdout);
+    const searchResults = payload.result;
     expect(searchResults.some((r: any) => r.name === 'list_pods')).toBe(true);
 
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('provides getToolHelp helper for detailed docs', async () => {
+  it('provides tools.help helper for detailed docs', async () => {
     const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'run-code-tool-'));
     const manifestPath = path.join(tmpDir, 'manifest.json');
     writeFileSync(
@@ -162,18 +164,97 @@ describe('RunCodeTool', () => {
     const tool = new RunCodeTool(undefined, manifestPath);
     const response = await tool.execute({
       code: `
-        const help = getToolHelp('listItems');
-        console.log(JSON.stringify(help));
+        return tools.help('listItems');
       `,
     });
 
-    const payload = JSON.parse(response.content[0].text);
+    const payload = response as any;
     expect(payload.success).toBe(true);
-    const helpData = JSON.parse(payload.stdout);
+    const helpData = payload.result;
     expect(helpData.name).toBe('list_items');
     expect(helpData.parameters).toHaveLength(1);
     expect(helpData.parameters[0].name).toBe('namespace');
 
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('unwraps { pods: [...] } format to { items: [...] }', async () => {
+    const tool = new RunCodeTool(undefined, '/path/does/not/exist');
+
+    // Mock tool executor returning { pods: [...] } format (like kube_list)
+    const mockExecutor = jest.fn().mockResolvedValue({
+      total: 2,
+      namespace: 'default',
+      pods: [{ name: 'pod1' }, { name: 'pod2' }],
+    });
+    tool.setToolExecutor(mockExecutor);
+
+    const response = await tool.execute({
+      code: `
+        const result = await tools.call('kube_list', { namespace: 'default' });
+        return result;
+      `,
+    });
+
+    const payload = response as any;
+    expect(payload.success).toBe(true);
+    // unwrapResult should convert { pods: [...] } to { items: [...] }
+    expect(payload.result).toEqual({
+      items: [{ name: 'pod1' }, { name: 'pod2' }],
+    });
+  });
+
+  it('wraps arrays returned directly to { items: [...] }', async () => {
+    const tool = new RunCodeTool(undefined, '/path/does/not/exist');
+
+    // Mock tool executor returning array directly (like get_replicasets)
+    const mockExecutor = jest.fn().mockResolvedValue([
+      { name: 'rs1', replicas: 2 },
+      { name: 'rs2', replicas: 3 },
+    ]);
+    tool.setToolExecutor(mockExecutor);
+
+    const response = await tool.execute({
+      code: `
+        const result = await tools.call('get_replicasets', { namespace: 'default' });
+        return result;
+      `,
+    });
+
+    const payload = response as any;
+    expect(payload.success).toBe(true);
+    // unwrapResult should wrap array to { items: [...] }
+    expect(payload.result).toEqual({
+      items: [
+        { name: 'rs1', replicas: 2 },
+        { name: 'rs2', replicas: 3 },
+      ],
+    });
+  });
+
+  it('preserves { items: [...] } format when already present', async () => {
+    const tool = new RunCodeTool(undefined, '/path/does/not/exist');
+
+    // Mock tool executor returning standard Kubernetes format
+    const mockExecutor = jest.fn().mockResolvedValue({
+      items: [{ name: 'item1' }, { name: 'item2' }],
+      metadata: { resourceVersion: '123' },
+    });
+    tool.setToolExecutor(mockExecutor);
+
+    const response = await tool.execute({
+      code: `
+        const result = await tools.call('some_tool', {});
+        return result;
+      `,
+    });
+
+    const payload = response as any;
+    expect(payload.success).toBe(true);
+    // unwrapResult should preserve { items: [...] } format
+    expect(payload.result).toEqual({
+      items: [{ name: 'item1' }, { name: 'item2' }],
+      metadata: { resourceVersion: '123' },
+    });
   });
 });

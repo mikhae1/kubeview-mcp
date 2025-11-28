@@ -3,8 +3,6 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import winston from 'winston';
 import { MCPBridge } from '../agent/bridge/MCPBridge.js';
-import { ToolSchemaIntrospector } from '../agent/codegen/ToolSchemaIntrospector.js';
-import { CodegenManager } from '../agent/codegen/CodegenManager.js';
 import { createSandboxManager } from '../agent/runtime/createSandboxManager.js';
 import {
   parseCodeModeConfig,
@@ -56,7 +54,7 @@ Options:
 
 Examples:
   # Run inline code
-  npm run code-mode -- -c "const pods = await kubeList({}); console.log(pods);"
+  npm run code-mode -- -c "const pods = await tools.kubernetes.list({}); console.log(pods);"
 
   # Run a file
   npm run code-mode -- -f ./my-script.ts
@@ -67,12 +65,10 @@ Examples:
   # Run default workspace/main.ts
   npm run code-mode
 
-Available functions in sandbox:
-  kubeList(), kubeGet(), kubeLogs(), kubeMetrics(), kubeExec(), kubeNet(), kubePort(), kubeLog()
-  helmList(), helmGet()
-  argoList(), argoGet(), argoLogs()
-  argocdApp()
-  listServers(), listTools(), searchTools()
+Available namespaces in sandbox:
+  tools.kubernetes.*, tools.helm.*, tools.argo.*, tools.argocd.*, tools.other.*
+  tools.list(), tools.search(), tools.help(), tools.call(), tools.servers()
+  fs.readFile(), fs.writeFile(), fs.listDir(), fs.exists()
 `);
 }
 
@@ -116,7 +112,6 @@ async function main(): Promise<void> {
 
   const config = await loadConfig(configPath, logger);
   const workspaceDir = path.resolve(config.workspaceDir);
-  const generatedDir = path.resolve(config.generatedDir);
 
   await ensureWorkspaceStructure(workspaceDir, logger);
 
@@ -126,12 +121,6 @@ async function main(): Promise<void> {
     logger,
   });
   await bridge.initialize();
-
-  const introspector = new ToolSchemaIntrospector(bridge);
-  const codegen = new CodegenManager(introspector, {
-    outputDir: generatedDir,
-  });
-  await codegen.generate();
 
   const sandbox = await createSandboxManager(bridge, {
     workspaceDir,
@@ -200,7 +189,6 @@ async function loadConfig(configPath: string, logger: winston.Logger): Promise<C
     logger.warn(`Config not found at ${configPath}, using defaults`);
     return {
       workspaceDir: './workspace',
-      generatedDir: './generated/servers',
       enablePII: false,
       sandbox: {
         memoryLimitMb: 256,
@@ -211,7 +199,7 @@ async function loadConfig(configPath: string, logger: winston.Logger): Promise<C
           name: 'kubeview-mcp',
           command: 'node',
           args: ['./dist/src/cli/cli.js'],
-          timeoutMs: 15000,
+          timeoutMs: 30000,
         },
       ],
     };
@@ -244,7 +232,7 @@ async function ensureWorkspaceStructure(
       entryFile,
       `// Default entry point - edit this file or use -c flag for inline code
 console.log('kubeview-mcp code-mode ready');
-console.log('Available tools:', listTools().map(t => t.name).join(', '));
+console.log('Available tools:', tools.list().map(t => t.name).join(', '));
 `,
       'utf-8',
     );

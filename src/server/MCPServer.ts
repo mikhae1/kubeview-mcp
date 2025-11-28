@@ -122,7 +122,8 @@ export class MCPServer {
       this.setupGracefulShutdown();
     }
 
-    if (process.env.NODE_MODE !== 'code') {
+    const mcpMode = process.env.MCP_MODE?.toLowerCase();
+    if (mcpMode !== 'code') {
       this.registerBuiltInTools();
     }
 

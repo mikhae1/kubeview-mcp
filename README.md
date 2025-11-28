@@ -49,7 +49,7 @@ To use code-mode only (heavy context tasks, like logs parsing, multiple pod diag
       "args": ["-y", "https://github.com/mikhae1/kubeview-mcp"],
       "env": {
         "KUBECONFIG": "$HOME/.kube/config",
-        "NODE_MODE": "code"
+        "MCP_MODE": "code"
       }
     }
   }
@@ -119,6 +119,7 @@ npm run command -- <tool_name> [--param=value ...]
 ### Kubernetes
 
 - **kube_list**: List resources or, when no `resourceType` is provided, return a cluster diagnostics overview
+  - Passing `namespace`, `labelSelector`, or `fieldSelector` without `resourceType` defaults to pod listings (so CLI / `run_code` snippets keep working as expected)
   - Params: `resourceType`, `namespace`, `labelSelector`, `fieldSelector`
   - Supported `resourceType` for listing: `pod`, `service`, `deployment`, `node`, `namespace`, `persistentvolume`, `persistentvolumeclaim`, `secret`, `configmap`, `role`, `clusterrole`, `rolebinding`, `clusterrolebinding`
 - **kube_get**: Describe a single resource or list a type using plural, kind, shortname, or fully-qualified `group/version/resource`
@@ -179,7 +180,10 @@ Provide env vars via your MCP client config or shell.
 - CLI executable overrides: **MCP_HELM_PATH**, **MCP_ARGO_PATH**, **MCP_ARGOCD_PATH**
 - Plugin toggles: **MCP_DISABLE_KUBERNETES_PLUGIN**, **MCP_DISABLE_HELM_PLUGIN**, **MCP_DISABLE_ARGO_PLUGIN**, **MCP_DISABLE_ARGOCD_PLUGIN** (`true|1` to disable)
 - Kubernetes options: **MCP_KUBE_CONTEXT**, **MCP_K8S_SKIP_TLS_VERIFY** (`true|1`)
-- Code-mode options: **NODE_MODE** (`code`) (default: `standard`)
+- Mode options: **MCP_MODE** (`code|tools|all`) (default: `all`)
+  - `code`: exposes only `run_code` tool
+  - `tools`: exposes only Kubernetes/Helm/Argo tools (no `run_code`)
+  - `all`: exposes both tools and `run_code` (default)
 - Code-mode config: **KUBE_MCP_CODE_MODE_CONFIG** (default: `kube-mcp.code-mode.json`)
 
 Example `mcp.json`:
@@ -258,17 +262,37 @@ npm run command -- kube_net --sourcePod=api-0 --namespace=prod --targetService=d
 npm run command -- helm_get --what=values --releaseName=my-release --namespace=default --allValues=true
 
 # Code execution
-npm run command -- run_code --code="console.log(JSON.stringify(await kubeList({}), null, 2));"
+npm run command -- run_code --code="return await tools.kubernetes.list({ namespace: 'default' });"
 ```
 
 ### How To
 
 #### Exposing only the `run_code` tool
 
-To present a single `run_code` tool to your MCP client (and force all the reasoning through the code), start the server with `NODE_MODE=code`, e.g.:
+To present a single `run_code` tool to your MCP client (and force all the reasoning through the code), start the server with `MCP_MODE=code`, e.g.:
 
 ```bash
-NODE_MODE=code npx -y https://github.com/mikhae1/kubeview-mcp
+MCP_MODE=code npx -y https://github.com/mikhae1/kubeview-mcp
+```
+
+#### Exposing only tools (no `run_code`)
+
+To expose only Kubernetes/Helm/Argo tools without `run_code`, use `MCP_MODE=tools`:
+
+```bash
+MCP_MODE=tools npx -y https://github.com/mikhae1/kubeview-mcp
+```
+
+#### Exposing both tools and `run_code` (default)
+
+By default (or with `MCP_MODE=all`), both tools and `run_code` are exposed:
+
+```bash
+# Default behavior
+npx -y https://github.com/mikhae1/kubeview-mcp
+
+# Explicitly set all mode
+MCP_MODE=all npx -y https://github.com/mikhae1/kubeview-mcp
 ```
 
 In this mode the server registers only the `run_code` tool, which accepts the following parameters:
