@@ -17,6 +17,7 @@ KubeView MCP is a read-only Model Context Protocol (MCP) server that exposes AI-
 - **Argo CD**: list/get app details, resources, history, logs, and status via a single multi-operation tool
 - **Sensitive data masking**: global redaction for secrets/tokens in ConfigMaps, Secrets, and Helm values
 - **Zero write access**: designed to be safe in production from day one
+- **Code-mode**: reasoning through code in a sandboxed environment with MCP tools access 🔥
 
 ---
 
@@ -38,7 +39,7 @@ Add to your MCP client config:
 }
 ```
 
-If you want to use code-mode only (heavy context tasks, like logs parsing, etc.):
+To use code-mode only (heavy context tasks, like logs parsing, multiple pod diagnostics, network diagnostics, etc.):
 
 ```json
 {
@@ -61,7 +62,7 @@ If you want to use code-mode only (heavy context tasks, like logs parsing, etc.)
 - Access to a Kubernetes cluster (kubeconfig)
 - Optional CLIs on PATH if you want to use those plugins: `helm`, `argo`, `argocd`
 
-### Local install
+### Local servrer setup
 
 #### npx
 
@@ -86,12 +87,13 @@ npm run setup
 # Build and start
 npm run build
 npm start
-
 # Or use the bundled binary wrapper
 kubeview-mcp serve
 
 # Launch the code-mode runtime (see section below)
 npm run code-mode
+# or
+kubeview-mcp-code-mode
 ```
 
 ## 🧠 Code-Mode Execution
@@ -106,53 +108,9 @@ Inspired by [Code execution with MCP](https://www.anthropic.com/engineering/code
 - **Sandboxed execution** – `isolated-vm` powers a locked-down Node.js-like environment with controlled `console`, MCP tool access, and a scoped filesystem bridge.
 - **Stateful workspace & skills** – the sandbox exposes a safe filesystem rooted at `./workspace`, including a `skills/` folder with a `SKILL.md` convention for reusable snippets.
 
-### How to use
-
-#### Exposing only the code-mode entry tool
-
-To present a single `run_code` tool to your MCP client (and force all heavy work through the filesystem runtime), start the server with `NODE_MODE=code`, e.g.:
-
-```bash
-NODE_MODE=code npx -y https://github.com/mikhae1/kubeview-mcp
-```
-
-In this mode the server registers only the `run_code` tool, which accepts the following parameters:
-
-```ts
-{
-  code: string;          // required – snippet you plan to execute in the sandbox
-  input?: string;        // optional stdin payload
-}
-```
-
-Calling `run_code` doesn’t execute anything inside the MCP process; instead it returns the generated filesystem tree (`generated/servers/...`, `generated/runtime/...`) plus instructions for launching `kubeview-mcp-code-mode` / `npm run code-mode`, keeping the MCP handshake tiny while the real work happens inside the sandbox.
-
-### Manually setting up the sandbox
-
-1. Copy the sample config and edit it for your environment:
-   ```bash
-   cp kube-mcp.code-mode.example.json kube-mcp.code-mode.json
-   ```
-2. Build the project so the CLI wrapper can import the compiled entrypoint:
-   ```bash
-   npm run build
-   ```
-3. Edit `workspace/main.ts` (auto-created on first run) to import generated helpers:
-
-4. Run the runtime (or use the new `kubeview-mcp-code-mode` binary):
-   ```bash
-   npm run code-mode
-   # or
-   kubeview-mcp-code-mode
-   ```
-
-Generated modules call back into real MCP servers via the sandbox bridge, so large responses stay in the execution environment and only summaries hit the model context.
-
-The runtime writes everything under `generated/` and `workspace/`. Clean them up at any time to force regeneration.
-
 ## 📟 Tool Index (CLI)
 
-Invoke tools with the helper:
+To invoke tools with the helper functions, use the `npm run command` script:
 
 ```bash
 npm run command -- <tool_name> [--param=value ...]
@@ -182,6 +140,8 @@ npm run command -- <tool_name> [--param=value ...]
   - Params: `namespace`, `podName` | `serviceName`, `remotePort` (required), `localPort`, `address`, `timeoutSeconds`, `readinessTimeoutSeconds`
 - **kube_net**: In-pod network diagnostics (DNS resolution, internet egress, pod/service connectivity)
   - Params: `sourcePod` (required), `namespace`, `container`, `targetPod`, `targetPodNamespace`, `targetService`, `targetServiceNamespace`, `targetPort`, `externalHost`, `externalPort`, `dnsNames[]`, toggles: `runDnsTest`, `runInternetTest`, `runPodConnectivityTest`, `runServiceConnectivityTest`, `timeoutSeconds`
+- **run_code**: Run code in the sandboxed environment
+  - Params: `code` (required), `input` (optional)
 
 ### Helm
 
@@ -219,8 +179,10 @@ Provide env vars via your MCP client config or shell.
 - CLI executable overrides: **MCP_HELM_PATH**, **MCP_ARGO_PATH**, **MCP_ARGOCD_PATH**
 - Plugin toggles: **MCP_DISABLE_KUBERNETES_PLUGIN**, **MCP_DISABLE_HELM_PLUGIN**, **MCP_DISABLE_ARGO_PLUGIN**, **MCP_DISABLE_ARGOCD_PLUGIN** (`true|1` to disable)
 - Kubernetes options: **MCP_KUBE_CONTEXT**, **MCP_K8S_SKIP_TLS_VERIFY** (`true|1`)
+- Code-mode options: **NODE_MODE** (`code`) (default: `standard`)
+- Code-mode config: **KUBE_MCP_CODE_MODE_CONFIG** (default: `kube-mcp.code-mode.json`)
 
-Example (Cursor `mcp.json`):
+Example `mcp.json`:
 
 ```json
 {
@@ -294,7 +256,54 @@ npm run command -- kube_net --sourcePod=api-0 --namespace=prod --targetService=d
 
 # Helm release values (masked)
 npm run command -- helm_get --what=values --releaseName=my-release --namespace=default --allValues=true
+
+# Code execution
+npm run command -- run_code --code="console.log(JSON.stringify(await kubeList({}), null, 2));"
 ```
+
+### How To
+
+#### Exposing only the `run_code` tool
+
+To present a single `run_code` tool to your MCP client (and force all the reasoning through the code), start the server with `NODE_MODE=code`, e.g.:
+
+```bash
+NODE_MODE=code npx -y https://github.com/mikhae1/kubeview-mcp
+```
+
+In this mode the server registers only the `run_code` tool, which accepts the following parameters:
+
+```ts
+{
+  code: string;          // required – snippet you plan to execute in the sandbox
+  input?: string;        // optional stdin payload
+}
+```
+
+Calling `run_code` doesn’t execute anything inside the MCP process; instead it returns the generated filesystem tree (`generated/servers/...`, `generated/runtime/...`) plus instructions for launching `kubeview-mcp-code-mode` / `npm run code-mode`, keeping the MCP handshake tiny while the real work happens inside the sandbox.
+
+#### Manually setting up the sandbox properties
+
+1. Copy the sample config and edit it for your environment:
+   ```bash
+   cp kube-mcp.code-mode.example.json kube-mcp.code-mode.json
+   ```
+2. Build the project so the CLI wrapper can import the compiled entrypoint:
+   ```bash
+   npm run build
+   ```
+3. Edit `workspace/main.ts` (auto-created on first run) to import generated helpers:
+
+4. Run the runtime (or use the new `kubeview-mcp-code-mode` binary):
+   ```bash
+   npm run code-mode
+   # or
+   kubeview-mcp-code-mode
+   ```
+
+Generated modules call back into real MCP servers via the sandbox bridge, so large responses stay in the execution environment and only summaries hit the model context.
+
+The runtime writes everything under `generated/` and `workspace/`. Clean them up at any time to force regeneration.
 
 ---
 

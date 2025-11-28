@@ -375,27 +375,22 @@ Each tool is also available as a camelCase function in the global scope (e.g., \
 
 \`\`\`typescript
 // Search for available tools
-const podTools = searchTools('pods');
-console.log(podTools);
+console.log(JSON.stringify(searchTools('pods'), null, 2));
 
-// Get help for a specific tool
-const help = getToolHelp('kubeList');
-console.log(help);
+// Inspect a specific tool
+console.log(JSON.stringify(getToolHelp('kubeList'), null, 2));
 
-// Use individual helper functions directly
+// Call helper functions directly
 const pods = await kubeList({ resourceType: 'pod', namespace: 'default' });
-console.log(\`Found \${pods.length} pods\`);
+console.log(JSON.stringify(pods, null, 2));
 \`\`\`
 
 ## Example Usage
 
 \`\`\`typescript
-// List pods in the default namespace
-const pods = await tools.kubernetes.list({
-  resourceType: 'pod',
-  namespace: 'default'
-});
-console.log(\`Found \${pods.length} pods\`);
+// List all pods
+const pods = await kubeList({});
+console.log(JSON.stringify(pods, null, 2));
 
 // Get logs for a specific pod
 const logs = await tools.kubernetes.logs({
@@ -406,11 +401,12 @@ console.log(logs);
 \`\`\`
 
 ## Output Format
-The tool returns a JSON object with:
+Returns an object with the following properties:
 - \`success\`: boolean
-- \`stdout\`: string (captured console.log output)
-- \`stderr\`: string (captured console.error output)
-- \`result\`: any (the return value of the script)
+- \`stdout\`: captured console.log/info output
+- \`stderr\`: captured console.error/warn output
+- \`result\` (optional): script return value when provided
+- \`error\`: message when \`success\` is false
 `;
   }
 

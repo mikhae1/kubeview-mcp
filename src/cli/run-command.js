@@ -16,14 +16,118 @@ import { KubernetesToolsPlugin } from '../../dist/src/plugins/KubernetesToolsPlu
 import { HelmToolsPlugin } from '../../dist/src/plugins/HelmToolsPlugin.js';
 import { ArgoToolsPlugin } from '../../dist/src/plugins/ArgoToolsPlugin.js';
 import { ArgoCDToolsPlugin } from '../../dist/src/plugins/ArgoCDToolsPlugin.js';
+import { RunCodeTool } from '../../dist/src/tools/RunCodeTool.js';
 import * as KubernetesToolClasses from '../../dist/src/tools/kubernetes/index.js';
 import * as HelmToolClasses from '../../dist/src/tools/helm/index.js';
 import * as ArgoToolClasses from '../../dist/src/tools/argo/index.js';
 import * as ArgoCDToolClasses from '../../dist/src/tools/argocd/index.js';
 
+// Create run_code tool instance for CLI usage
+function createRunCodeToolForCLI() {
+  // Create a minimal tool executor that can call the other CLI commands
+  const toolExecutor = async (toolName, args) => {
+    // For CLI usage, we'll simulate calling other tools by creating instances
+    // This is a simplified version - in a real implementation we'd want to reuse the plugin instances
+    try {
+      let result;
+      if (toolName.startsWith('helm_')) {
+        result = await HelmToolsPlugin.executeCommand(toolName, args);
+      } else if (toolName.startsWith('argo_') && !toolName.startsWith('argocd_')) {
+        result = await ArgoToolsPlugin.executeCommand(toolName, args);
+      } else if (toolName.startsWith('argocd_')) {
+        result = await ArgoCDToolsPlugin.executeCommand(toolName, args);
+      } else {
+        // Default to Kubernetes tools
+        result = await KubernetesToolsPlugin.executeCommand(toolName, args);
+      }
+      return result;
+    } catch (error) {
+      throw new Error(`Tool execution failed: ${error.message}`);
+    }
+  };
+
+  const runCodeTool = new RunCodeTool();
+  runCodeTool.setToolExecutor(toolExecutor);
+
+  // Set up available tools for the run_code tool description
+  const allTools = [];
+
+  // Add Kubernetes tools
+  const { CommonSchemas, BaseTool, ...kubernetesToolClasses } = KubernetesToolClasses;
+  for (const [exportName, ToolClass] of Object.entries(kubernetesToolClasses)) {
+    if (typeof ToolClass === 'function') {
+      try {
+        const instance = new ToolClass();
+        if (instance.tool) {
+          allTools.push(instance.tool);
+        }
+      } catch {}
+    }
+  }
+
+  // Add Helm tools
+  const { HelmCommonSchemas, HelmBaseTool, ...helmToolClasses } = HelmToolClasses;
+  for (const [exportName, ToolClass] of Object.entries(helmToolClasses)) {
+    if (typeof ToolClass === 'function') {
+      try {
+        const instance = new ToolClass();
+        if (instance.tool) {
+          allTools.push(instance.tool);
+        }
+      } catch {}
+    }
+  }
+
+  // Add Argo tools
+  const { ArgoCommonSchemas, ...argoToolClasses } = ArgoToolClasses;
+  for (const [exportName, ToolClass] of Object.entries(argoToolClasses)) {
+    if (typeof ToolClass === 'function') {
+      try {
+        const instance = new ToolClass();
+        if (instance.tool) {
+          allTools.push(instance.tool);
+        }
+      } catch {}
+    }
+  }
+
+  // Add ArgoCD tools
+  const { ArgoCDCommonSchemas, ...argoCDToolClasses } = ArgoCDToolClasses;
+  for (const [exportName, ToolClass] of Object.entries(argoCDToolClasses)) {
+    if (typeof ToolClass === 'function') {
+      try {
+        const instance = new ToolClass();
+        if (instance.tool) {
+          allTools.push(instance.tool);
+        }
+      } catch {}
+    }
+  }
+
+  runCodeTool.setTools(allTools);
+  return runCodeTool;
+}
+
 // Dynamically extract command descriptions from Kubernetes, Helm, Argo, and ArgoCD tool classes
 function extractCommandDescriptions() {
   const descriptions = {};
+
+  // Add run_code tool
+  const runCodeTool = createRunCodeToolForCLI();
+  const tool = runCodeTool.tool;
+  const params = {};
+
+  if (tool.inputSchema && tool.inputSchema.properties) {
+    for (const [param, schema] of Object.entries(tool.inputSchema.properties)) {
+      params[param] = schema.description || 'No description available';
+    }
+  }
+
+  descriptions[tool.name] = {
+    description: tool.description,
+    params,
+    type: 'run_code',
+  };
 
   // Process Kubernetes tools
   // eslint-disable-next-line no-unused-vars
@@ -239,9 +343,12 @@ function showGeneralHelp() {
   const helmCommands = {};
   const argoCommands = {};
   const argoCDCommands = {};
+  const runCodeCommands = {};
 
   for (const [command, info] of Object.entries(COMMAND_DESCRIPTIONS)) {
-    if (info.type === 'helm') {
+    if (info.type === 'run_code') {
+      runCodeCommands[command] = info;
+    } else if (info.type === 'helm') {
       helmCommands[command] = info;
     } else if (info.type === 'argo') {
       argoCommands[command] = info;
@@ -250,6 +357,11 @@ function showGeneralHelp() {
     } else {
       kubernetesCommands[command] = info;
     }
+  }
+
+  console.log('\nCode execution commands:');
+  for (const [command, info] of Object.entries(runCodeCommands)) {
+    console.log(`  ${command.padEnd(20)} ${info.description}`);
   }
 
   console.log('\nKubernetes commands:');
@@ -275,6 +387,8 @@ function showGeneralHelp() {
   console.log('\nFor command-specific help:');
   console.log('  npm run command help <command_name>');
   console.log('\nExamples:');
+  console.log('  # Code execution');
+  console.log('  npm run command -- run_code --code="console.log(await kubeList({}));"');
   console.log('  # Kubernetes');
   console.log('  npm run command -- get_pods');
   console.log('  npm run command -- get_metrics --namespace=kube-system');
@@ -299,12 +413,27 @@ function parseParams() {
   for (let i = 3; i < process.argv.length; i++) {
     const arg = process.argv[i];
     if (arg.startsWith('--')) {
-      const [key, value] = arg.slice(2).split('=');
-      if (value === undefined) {
-        // Handle boolean flags
-        params[key] = true;
+      const key = arg.slice(2).split('=')[0];
+      const splitValue = arg.slice(2).split('=').slice(1).join('=');
+
+      if (splitValue === '') {
+        // Check if the next argument exists and doesn't start with '--'
+        // If so, treat it as the value for this parameter
+        if (i + 1 < process.argv.length && !process.argv[i + 1].startsWith('--')) {
+          const nextArg = process.argv[i + 1];
+          // Try to parse numbers and booleans
+          if (nextArg === 'true') params[key] = true;
+          else if (nextArg === 'false') params[key] = false;
+          else if (!isNaN(Number(nextArg))) params[key] = Number(nextArg);
+          else params[key] = nextArg;
+          i++; // Skip the next argument since we consumed it
+        } else {
+          // Handle boolean flags
+          params[key] = true;
+        }
       } else {
-        // Handle key-value pairs
+        // Handle key=value format, but preserve all content after the first =
+        let value = splitValue;
         // Try to parse numbers and booleans
         if (value === 'true') params[key] = true;
         else if (value === 'false') params[key] = false;
@@ -352,7 +481,12 @@ async function main() {
     let result;
     const commandInfo = COMMAND_DESCRIPTIONS[commandName];
 
-    if (commandInfo.type === 'helm') {
+    if (commandInfo.type === 'run_code') {
+      // Handle run_code tool execution
+      console.log('\nExecuting run_code in sandboxed environment...');
+      const runCodeTool = createRunCodeToolForCLI();
+      result = await runCodeTool.execute(params);
+    } else if (commandInfo.type === 'helm') {
       // Use HelmToolsPlugin for Helm commands
       console.log('\nExecuting Helm CLI command...');
       result = await HelmToolsPlugin.executeCommand(commandName, params);
