@@ -30,25 +30,21 @@ Add to your MCP client config:
   "mcpServers": {
     "kubeview-mcp": {
       "command": "npx",
-      "args": ["-y", "https://github.com/mikhae1/kubeview-mcp"],
-      "env": {
-        "KUBECONFIG": "$HOME/.kube/config"
-      }
+      "args": ["-y", "kubeview-mcp"]
     }
   }
 }
 ```
 
-To use code-mode only (heavy context tasks, like logs parsing, multiple pod diagnostics, network diagnostics, etc.):
+Force to use code-mode only (complex or heavy context tasks, like logs parsing, multiple pod diagnostics, traffic analysis, etc.):
 
 ```json
 {
   "mcpServers": {
     "kubeview-mcp": {
       "command": "npx",
-      "args": ["-y", "https://github.com/mikhae1/kubeview-mcp"],
+      "args": ["-y", "kubeview-mcp"],
       "env": {
-        "KUBECONFIG": "$HOME/.kube/config",
         "MCP_MODE": "code"
       }
     }
@@ -67,7 +63,7 @@ To use code-mode only (heavy context tasks, like logs parsing, multiple pod diag
 #### npx
 
 ```bash
-npx -y https://github.com/mikhae1/kubeview-mcp
+npx -y kubeview-mcp
 ```
 
 #### git
@@ -196,7 +192,9 @@ Example `mcp.json`:
       "args": ["-y", "https://github.com/mikhae1/kubeview-mcp"],
       "env": {
         "KUBECONFIG": "$HOME/.kube/config",
+        "MCP_KUBE_CONTEXT": "dev",
         "MCP_LOG_LEVEL": "info",
+        "MCP_LOG_FILE": "kubeview-mcp.log",
         "MCP_HELM_TIMEOUT": "45000",
         "MCP_DISABLE_ARGO_PLUGIN": "1"
       }

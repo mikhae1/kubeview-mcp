@@ -221,7 +221,8 @@ ${code}
     const tools = this.getToolSchemaSummaries();
     const overviewTree = this.descriptionBuilder.buildOverviewTree(tools);
 
-    return `This tool allows you to debug, list, get and interact with the Kubernetes cluster using TypeScript code.
+    return `Execute TypeScript code in a sandboxed Node.js environment with access to namespaced Kubernetes, Helm, Argo, and ArgoCD tools.
+Use 'return' to output data; supports top-level await and has access to the global 'tools' object for all MCP operations.
 
 ## Environment
 - **Runtime**: Node.js (vm)
