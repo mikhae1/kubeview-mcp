@@ -343,11 +343,12 @@ class SetupManager {
     console.log('Add the following to your mcp.json (e.g. ~/.cursor/mcp.json):\n');
     console.log(`{
   "mcpServers": {
-    "kubeview-mcp": {
+    "kubeview": {
       "command": "npx",
-      "args": ["https://github.com/mikhae1/kubeview-mcp"],
+      "args": ["-y", "kubeview-mcp"],
       "env": {
-        "KUBECONFIG": "$HOME/.kube/config"
+        "KUBECONFIG": "$HOME/.kube/config",
+        "MCP_MODE": "all"
       }
     }
   }

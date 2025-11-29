@@ -66,31 +66,22 @@ export class VmSandboxManager implements SandboxRuntime {
       throw new Error('Sandbox not initialized');
     }
 
-    // Output directly to stdout/stderr for sandbox code visibility
+    // Route sandbox console output to stderr to avoid interfering with MCP stdout transport
+    const format = (...args: unknown[]) =>
+      args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg, null, 2))).join(' ');
+
     const proxy = {
       log: (...args: unknown[]) => {
-        const message = args
-          .map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg, null, 2)))
-          .join(' ');
-        process.stdout.write(message + '\n');
+        process.stderr.write(format(...args) + '\n');
       },
       info: (...args: unknown[]) => {
-        const message = args
-          .map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg, null, 2)))
-          .join(' ');
-        process.stdout.write(message + '\n');
+        process.stderr.write(format(...args) + '\n');
       },
       warn: (...args: unknown[]) => {
-        const message = args
-          .map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg, null, 2)))
-          .join(' ');
-        process.stderr.write('[WARN] ' + message + '\n');
+        process.stderr.write('[WARN] ' + format(...args) + '\n');
       },
       error: (...args: unknown[]) => {
-        const message = args
-          .map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg, null, 2)))
-          .join(' ');
-        process.stderr.write('[ERROR] ' + message + '\n');
+        process.stderr.write('[ERROR] ' + format(...args) + '\n');
       },
     };
 
