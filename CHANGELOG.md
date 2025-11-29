@@ -7,8 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2025-11-29
+
+### Added
+- **RunCode Tool Exposure**: Exposed `run_code` tool by default in standard mode alongside other tools.
+- **Code-Mode Prompt**: Added `code-mode` prompt for injecting the full TypeScript API documentation, tool overview, and examples into the context.
+
+### Changed
+- **Documentation**: Improved README.md to be more professional, valid, and concise.
+- **Node Styling**: Modernized node highlight effects, updated color palette, and softened map node visuals.
+- **Dependencies**: Updated deprecated dependencies.
+
 ### Fixed
-- `kube_list` now honors namespace/selector filters even when `resourceType` is omitted, preventing `run_code` and CLI snippets from falling back to cluster diagnostics.
+- **Filter Logic**: `kube_list` now honors namespace/selector filters even when `resourceType` is omitted.
+- **Runtime Errors**: Fixed `ERR_MODULE_NOT_FOUND` for `typescript` package.
+- **Build Issues**: Resolved TypeScript compilation errors in `src/index.ts`.
+- **Testing**: Fixed failing tests in `tests/tools/RunCodeTool.test.ts`.
+- **Logging**: Fixed "Required parameter name was null or undefined" error in `kube_log` and `kube_logs` tools.
+- **UI Glitches**: Fixed graph node highlighting flickering.
 
 ## [1.3.0] - 2025-11-27
 
