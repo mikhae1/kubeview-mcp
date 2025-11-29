@@ -154,7 +154,10 @@ class KubeMCPCLI {
 
     try {
       // Determine the correct index path after build
-      const finalIndexPath = fs.existsSync(indexPathFlat) ? indexPathFlat : indexPathNested;
+      // Prefer the nested path because the TypeScript build outputs to dist/src by default.
+      // Older builds may leave a flat dist/index.js behind, which can point to stale artifacts
+      // (e.g., missing version.cjs). Prioritizing the nested path avoids those mismatches.
+      const finalIndexPath = fs.existsSync(indexPathNested) ? indexPathNested : indexPathFlat;
 
       // Debug: Check if the file actually exists
       if (!fs.existsSync(finalIndexPath)) {

@@ -4,7 +4,6 @@ import { z } from 'zod';
 
 export const CodeModeConfigSchema = z.object({
   workspaceDir: z.string().default('./workspace'),
-  generatedDir: z.string().default('./generated/servers'),
   enablePII: z.boolean().default(false),
   sandbox: z
     .object({

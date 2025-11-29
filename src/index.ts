@@ -3,9 +3,10 @@
  * Kubernetes MCP Server
  * Main entry point for the Model Context Protocol server
  *
- * Modes:
- * - Standard mode: exposes all Kubernetes, Helm, and Argo tools
- * - Code mode (NODE_MODE=code): exposes only `run_code` for agent code execution
+ * Modes (MCP_MODE env var):
+ * - code: exposes only `run_code` for agent code execution
+ * - tools: exposes only Kubernetes, Helm, and Argo tools (no `run_code`)
+ * - all (default): exposes both tools and `run_code`
  *   per https://www.anthropic.com/engineering/code-execution-with-mcp
  */
 
@@ -71,6 +72,20 @@ async function startCodeMode(server: MCPServer): Promise<void> {
     text: runCodeTool.generateGlobalDts(),
   } as Resource & { text: string });
 
+  // Register code-mode prompt with tool overview and examples
+  server.registerPrompt({
+    name: 'code-mode',
+    description:
+      'Injects TypeScript definitions and API docs for Code Mode with tool overview and examples.',
+    arguments: [],
+    getMessages: async () => [
+      {
+        role: 'user',
+        content: { type: 'text', text: runCodeTool.getPromptContent() },
+      },
+    ],
+  });
+
   await server.start();
   console.error(
     `KubeView MCP is running in code-mode. ` +
@@ -79,9 +94,30 @@ async function startCodeMode(server: MCPServer): Promise<void> {
 }
 
 /**
- * Standard mode: loads all Kubernetes, Helm, Argo, and ArgoCD plugins.
+ * Tools-only mode: loads all Kubernetes, Helm, Argo, and ArgoCD plugins without run_code.
  */
-async function startStandardMode(server: MCPServer): Promise<void> {
+async function startToolsMode(server: MCPServer): Promise<void> {
+  const kubernetesPlugin = new KubernetesToolsPlugin();
+  await server.loadPlugin(kubernetesPlugin);
+
+  const optionalPlugins = [new HelmToolsPlugin(), new ArgoToolsPlugin(), new ArgoCDToolsPlugin()];
+  for (const plugin of optionalPlugins) {
+    try {
+      await server.loadPlugin(plugin);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Optional plugin '${plugin.name}' skipped: ${message}`);
+    }
+  }
+
+  await server.start();
+  console.error(`KubeView MCP is running in tools-mode. Only Kubernetes/Helm/Argo tools exposed.`);
+}
+
+/**
+ * All mode: loads all Kubernetes, Helm, Argo, and ArgoCD plugins plus run_code.
+ */
+async function startAllMode(server: MCPServer): Promise<void> {
   const config = loadCodeModeConfig();
 
   const kubernetesPlugin = new KubernetesToolsPlugin();
@@ -106,7 +142,7 @@ async function startStandardMode(server: MCPServer): Promise<void> {
   runCodeTool.setToolExecutor(toolExecutor);
 
   // We need to set tools for the description builder.
-  // In standard mode, we can get them from the server after plugins are loaded.
+  // In all mode, we can get them from the server after plugins are loaded.
   // However, server.getTools() returns Tool[], but setTools expects Tool[] which is fine.
   // But wait, RunCodeTool.setTools uses them to build the manifest for the description.
   // We should do this before registering the tool so the description is correct?
@@ -123,8 +159,32 @@ async function startStandardMode(server: MCPServer): Promise<void> {
     text: runCodeTool.generateGlobalDts(),
   } as Resource & { text: string });
 
+  // Register code-mode prompt with tool overview and examples
+  server.registerPrompt({
+    name: 'code-mode',
+    description:
+      'Injects TypeScript definitions and API docs for Code Mode with tool overview and examples.',
+    arguments: [],
+    getMessages: async () => [
+      {
+        role: 'user',
+        content: { type: 'text', text: runCodeTool.getPromptContent() },
+      },
+    ],
+  });
+
   await server.start();
   console.error(`KubeView MCP is running. Waiting for connections...`);
+}
+
+type MCPMode = 'code' | 'tools' | 'all';
+
+function getMCPMode(): MCPMode {
+  const mode = process.env.MCP_MODE?.toLowerCase();
+  if (mode === 'code' || mode === 'tools' || mode === 'all') {
+    return mode;
+  }
+  return 'all'; // default
 }
 
 export async function main(): Promise<void> {
@@ -132,12 +192,19 @@ export async function main(): Promise<void> {
 
   try {
     const server = new MCPServer();
-    const isCodeMode = process.env.NODE_MODE === 'code';
+    const mode = getMCPMode();
 
-    if (isCodeMode) {
-      await startCodeMode(server);
-    } else {
-      await startStandardMode(server);
+    switch (mode) {
+      case 'code':
+        await startCodeMode(server);
+        break;
+      case 'tools':
+        await startToolsMode(server);
+        break;
+      case 'all':
+      default:
+        await startAllMode(server);
+        break;
     }
   } catch (error) {
     console.error('Failed to start MCP server:', error);

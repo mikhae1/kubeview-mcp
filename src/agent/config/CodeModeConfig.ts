@@ -3,7 +3,6 @@ import type { MCPServerConfig } from '../bridge/MCPBridge.js';
 
 export const CodeModeConfigSchema = z.object({
   workspaceDir: z.string().default('./workspace'),
-  generatedDir: z.string().default('./generated/servers'),
   enablePII: z.boolean().default(false),
   sandbox: z
     .object({
@@ -21,7 +20,15 @@ export const CodeModeConfigSchema = z.object({
         timeoutMs: z.number().optional(),
       }),
     )
-    .min(1),
+    .min(1)
+    .default([
+      {
+        name: 'kubeview-mcp',
+        command: 'node',
+        args: ['./dist/src/cli/cli.js'],
+        timeoutMs: 15000,
+      },
+    ]),
 });
 
 export type CodeModeConfig = z.infer<typeof CodeModeConfigSchema>;

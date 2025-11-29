@@ -141,31 +141,55 @@ export class KubeListTool implements BaseTool {
       name,
     } = params || {};
 
-    // Default diagnostics overview when no resourceType provided
-    if (!resourceType) {
+    const normalizeFilter = (value?: string) =>
+      typeof value === 'string' ? value.trim() || undefined : value;
+
+    const namespaceFilter = normalizeFilter(namespace);
+    const labelSelectorFilter = normalizeFilter(labelSelector);
+    const fieldSelectorFilter = normalizeFilter(fieldSelector);
+
+    const hasBasicFilters =
+      Boolean(namespaceFilter) || Boolean(labelSelectorFilter) || Boolean(fieldSelectorFilter);
+
+    const targetResourceType = resourceType || (hasBasicFilters ? 'pod' : undefined);
+
+    // Default diagnostics overview when no resourceType provided or inferred
+    if (!targetResourceType) {
       return this.getClusterDiagnostics(client);
     }
 
-    switch (resourceType) {
+    switch (targetResourceType) {
       case 'pod': {
         const ops = new PodOperations(client);
-        return ops.listFormatted({ namespace, labelSelector, fieldSelector });
+        return ops.listFormatted({
+          namespace: namespaceFilter,
+          labelSelector: labelSelectorFilter,
+          fieldSelector: fieldSelectorFilter,
+        });
       }
       case 'service': {
         const ops = new ServiceOperations(client);
-        return ops.listFormatted({ namespace, labelSelector, fieldSelector });
+        return ops.listFormatted({
+          namespace: namespaceFilter,
+          labelSelector: labelSelectorFilter,
+          fieldSelector: fieldSelectorFilter,
+        });
       }
       case 'deployment': {
         const ops = new DeploymentOperations(client);
-        return ops.list({ namespace, labelSelector, fieldSelector });
+        return ops.list({
+          namespace: namespaceFilter,
+          labelSelector: labelSelectorFilter,
+          fieldSelector: fieldSelectorFilter,
+        });
       }
       case 'configmap': {
         const ops = new ConfigMapOperations(client);
-        return ops.list({ namespace, labelSelector });
+        return ops.list({ namespace: namespaceFilter, labelSelector: labelSelectorFilter });
       }
       case 'secret': {
         const ops = new SecretOperations(client);
-        return ops.list({ namespace, labelSelector });
+        return ops.list({ namespace: namespaceFilter, labelSelector: labelSelectorFilter });
       }
       case 'namespace': {
         const ops = new NamespaceOperations(client);
@@ -173,8 +197,8 @@ export class KubeListTool implements BaseTool {
       }
       case 'persistentvolume': {
         return this.listPersistentVolumesWithDiagnostics(client, {
-          labelSelector,
-          fieldSelector,
+          labelSelector: labelSelectorFilter,
+          fieldSelector: fieldSelectorFilter,
           includeAnalysis,
           includeEvents,
           includeCSI,
@@ -187,9 +211,9 @@ export class KubeListTool implements BaseTool {
       }
       case 'persistentvolumeclaim': {
         return this.listPersistentVolumeClaimsWithDiagnostics(client, {
-          namespace,
-          labelSelector,
-          fieldSelector,
+          namespace: namespaceFilter,
+          labelSelector: labelSelectorFilter,
+          fieldSelector: fieldSelectorFilter,
           includeAnalysis,
           includeEvents,
           includePods,
@@ -209,47 +233,47 @@ export class KubeListTool implements BaseTool {
       }
       case 'role': {
         // Namespaced resource
-        if (namespace) {
+        if (namespaceFilter) {
           const res = await client.rbac.listNamespacedRole({
-            namespace,
-            labelSelector,
-            fieldSelector,
+            namespace: namespaceFilter,
+            labelSelector: labelSelectorFilter,
+            fieldSelector: fieldSelectorFilter,
           } as any);
           return (res as any)?.items ?? [];
         }
         const res = await client.rbac.listRoleForAllNamespaces({
-          labelSelector,
-          fieldSelector,
+          labelSelector: labelSelectorFilter,
+          fieldSelector: fieldSelectorFilter,
         } as any);
         return (res as any)?.items ?? [];
       }
       case 'clusterrole': {
         const res = await client.rbac.listClusterRole({
-          labelSelector,
-          fieldSelector,
+          labelSelector: labelSelectorFilter,
+          fieldSelector: fieldSelectorFilter,
         } as any);
         return (res as any)?.items ?? [];
       }
       case 'rolebinding': {
         // Namespaced resource
-        if (namespace) {
+        if (namespaceFilter) {
           const res = await client.rbac.listNamespacedRoleBinding({
-            namespace,
-            labelSelector,
-            fieldSelector,
+            namespace: namespaceFilter,
+            labelSelector: labelSelectorFilter,
+            fieldSelector: fieldSelectorFilter,
           } as any);
           return (res as any)?.items ?? [];
         }
         const res = await client.rbac.listRoleBindingForAllNamespaces({
-          labelSelector,
-          fieldSelector,
+          labelSelector: labelSelectorFilter,
+          fieldSelector: fieldSelectorFilter,
         } as any);
         return (res as any)?.items ?? [];
       }
       case 'clusterrolebinding': {
         const res = await client.rbac.listClusterRoleBinding({
-          labelSelector,
-          fieldSelector,
+          labelSelector: labelSelectorFilter,
+          fieldSelector: fieldSelectorFilter,
         } as any);
         return (res as any)?.items ?? [];
       }

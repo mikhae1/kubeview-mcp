@@ -8,12 +8,93 @@ import {
   ReadResourceRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
+  LoggingLevel,
+  LoggingLevelSchema,
+  SetLevelRequestSchema,
   Tool,
   Resource,
   ResourceTemplate,
 } from '@modelcontextprotocol/sdk/types.js';
 import winston from 'winston';
+import TransportStream from 'winston-transport';
 import { isSensitiveMaskEnabled, maskObjectDeep } from '../utils/SensitiveData.js';
+
+const LOG_LEVEL_ORDER: LoggingLevel[] = [
+  'debug',
+  'info',
+  'notice',
+  'warning',
+  'error',
+  'critical',
+  'alert',
+  'emergency',
+];
+
+const WINSTON_TO_MCP_LEVEL: Record<string, LoggingLevel> = {
+  error: 'error',
+  warn: 'warning',
+  info: 'info',
+  http: 'notice',
+  verbose: 'notice',
+  debug: 'debug',
+  silly: 'debug',
+};
+
+class MCPLoggingTransport extends TransportStream {
+  constructor(
+    private readonly server: Server,
+    private readonly getClientLevel: () => LoggingLevel | undefined,
+  ) {
+    super({ level: 'silly' });
+  }
+
+  private shouldSend(level: LoggingLevel): boolean {
+    const clientLevel = this.getClientLevel();
+    if (!clientLevel) return false;
+
+    const requestedIdx = LOG_LEVEL_ORDER.indexOf(clientLevel);
+    const currentIdx = LOG_LEVEL_ORDER.indexOf(level);
+    if (requestedIdx === -1 || currentIdx === -1) return false;
+
+    return currentIdx >= requestedIdx;
+  }
+
+  private serialize(info: winston.Logform.TransformableInfo): unknown {
+    const { level: logLevel, message, timestamp, stack, ...meta } = info as any;
+    const cleanMeta = Object.fromEntries(
+      Object.entries(meta).filter(([key]) => typeof key === 'string' && !key.startsWith('Symbol(')),
+    );
+
+    if (Object.keys(cleanMeta).length === 0 && stack) {
+      return stack;
+    }
+
+    if (Object.keys(cleanMeta).length === 0) {
+      return stack || message;
+    }
+
+    return { level: logLevel, message, timestamp, stack, ...cleanMeta };
+  }
+
+  log(info: winston.Logform.TransformableInfo, callback: () => void): void {
+    setTimeout(() => this.emit('logged', info), 0);
+
+    const mappedLevel =
+      WINSTON_TO_MCP_LEVEL[info.level as keyof typeof WINSTON_TO_MCP_LEVEL] ?? 'notice';
+    if (this.shouldSend(mappedLevel)) {
+      // Best-effort: do not throw if transport is not connected yet
+      this.server
+        .sendLoggingMessage({
+          level: mappedLevel,
+          logger: 'kubeview-mcp',
+          data: this.serialize(info),
+        })
+        .catch(() => undefined);
+    }
+
+    callback();
+  }
+}
 
 /**
  * Plugin interface for extending MCP server functionality
@@ -39,6 +120,18 @@ interface ToolEntry {
 }
 
 /**
+ * Prompt registry entry
+ */
+interface PromptEntry {
+  name: string;
+  description?: string;
+  arguments?: Array<{ name: string; description?: string; required?: boolean }>;
+  getMessages: (
+    args?: Record<string, string>,
+  ) => Promise<Array<{ role: string; content: { type: string; text: string } }>>;
+}
+
+/**
  * Core MCP Server implementation for Kubernetes operations
  */
 export interface MCPServerOptions {
@@ -50,10 +143,12 @@ export class MCPServer {
   private server: Server;
   private transport: StdioServerTransport;
   private logger: winston.Logger;
+  private clientLoggingLevel?: LoggingLevel;
   private tools: Map<string, ToolEntry> = new Map();
   private resources: Map<string, Resource> = new Map();
   private resourceTemplates: Map<string, ResourceTemplate> = new Map();
   private plugins: Map<string, MCPPlugin> = new Map();
+  private prompts: Map<string, PromptEntry> = new Map();
   private isShuttingDown = false;
   private options: MCPServerOptions;
   private eventListeners: Array<{
@@ -64,34 +159,8 @@ export class MCPServer {
 
   constructor(options: MCPServerOptions = {}) {
     this.options = options;
-    // Initialize Winston logger
-    const transports: winston.transport[] = [
-      new winston.transports.Console({
-        stderrLevels: ['error', 'warn', 'info', 'verbose', 'debug', 'silly'],
-        format: winston.format.combine(winston.format.colorize(), winston.format.simple()),
-      }),
-    ];
 
-    // Optional file logging controlled by env
-    const isFileLogEnabled =
-      process.env.MCP_LOG_ENABLE === 'true' || process.env.MCP_LOG_ENABLE === '1';
-    if (isFileLogEnabled) {
-      const logFilePath = process.env.MCP_LOG_FILE || 'kubeview-mcp.log';
-      transports.push(
-        new winston.transports.File({
-          filename: logFilePath,
-          format: winston.format.json(),
-        }),
-      );
-    }
-
-    this.logger = winston.createLogger({
-      level: process.env.MCP_LOG_LEVEL || 'info',
-      format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
-      transports,
-    });
-
-    // Initialize MCP server
+    // Initialize MCP server (capabilities first so logging transport can use it)
     this.server = new Server(
       {
         name: 'kubeview-mcp',
@@ -102,12 +171,18 @@ export class MCPServer {
           tools: {},
           resources: {},
           prompts: {},
+          logging: {},
         },
       },
     );
 
     // Initialize stdio transport
     this.transport = new StdioServerTransport();
+
+    this.clientLoggingLevel = this.parseLoggingLevel(process.env.MCP_CLIENT_LOG_LEVEL);
+
+    // Initialize Winston logger (stderr only to avoid interfering with MCP stdout)
+    this.logger = this.createLogger();
 
     // Add custom error handler to the transport (skip in tests)
     if (!options.skipTransportErrorHandling) {
@@ -122,7 +197,8 @@ export class MCPServer {
       this.setupGracefulShutdown();
     }
 
-    if (process.env.NODE_MODE !== 'code') {
+    const mcpMode = process.env.MCP_MODE?.toLowerCase();
+    if (mcpMode !== 'code') {
       this.registerBuiltInTools();
     }
 
@@ -296,6 +372,13 @@ export class MCPServer {
    * Set up request handlers for MCP protocol
    */
   private setupHandlers(): void {
+    // Allow clients to request server log level for notifications
+    this.server.setRequestHandler(SetLevelRequestSchema, async (request) => {
+      this.clientLoggingLevel = request.params.level;
+      this.logger.info(`Client logging level set to ${request.params.level}`);
+      return {};
+    });
+
     // Handle tool listing
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Notify plugins that a new conversation has started. Most MCP clients
@@ -402,15 +485,30 @@ export class MCPServer {
 
     // Handle prompt listing
     this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
-      this.logger.debug('Listing prompts (none available)');
-      return { prompts: [] };
+      const prompts = Array.from(this.prompts.values()).map((entry) => ({
+        name: entry.name,
+        description: entry.description,
+        arguments: entry.arguments,
+      }));
+      this.logger.debug(`Listing ${prompts.length} prompts`);
+      return { prompts };
     });
 
     // Handle prompt getting
     this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-      const error = `Prompt not found: ${request.params.name}`;
-      this.logger.error(error);
-      throw new Error(error);
+      const promptEntry = this.prompts.get(request.params.name);
+      if (!promptEntry) {
+        const error = `Prompt not found: ${request.params.name}`;
+        this.logger.error(error);
+        throw new Error(error);
+      }
+
+      this.logger.info(`Getting prompt: ${request.params.name}`);
+      const messages = await promptEntry.getMessages(request.params.arguments);
+      return {
+        description: promptEntry.description,
+        messages,
+      };
     });
   }
 
@@ -454,6 +552,18 @@ export class MCPServer {
 
     this.resources.set(resource.uri, resource);
     this.logger.info(`Registered resource: ${resource.uri}`);
+  }
+
+  /**
+   * Register a prompt with the MCP server
+   */
+  public registerPrompt(prompt: PromptEntry): void {
+    if (this.prompts.has(prompt.name)) {
+      this.logger.warn(`Prompt already registered: ${prompt.name}, overwriting`);
+    }
+
+    this.prompts.set(prompt.name, prompt);
+    this.logger.info(`Registered prompt: ${prompt.name}`);
   }
 
   /**
@@ -610,5 +720,87 @@ export class MCPServer {
    */
   public cleanup(): void {
     this.removeAllListeners();
+  }
+
+  /**
+   * Build a stderr-only logger with optional file output and MCP log forwarding.
+   */
+  private createLogger(): winston.Logger {
+    // Some environments shim winston; only call errors() when it's actually a function.
+    const rawErrors = (winston.format as any).errors;
+    const errorFormatter = typeof rawErrors === 'function' ? rawErrors({ stack: true }) : undefined;
+
+    const splatFormatter = (winston.format as any).splat
+      ? (winston.format as any).splat()
+      : winston.format.combine();
+
+    const baseFormat = winston.format.combine(
+      winston.format.timestamp(),
+      errorFormatter ?? winston.format.combine(),
+      splatFormatter,
+    );
+
+    const printfFactory = (winston.format as any).printf;
+    const colorizeFactory = (winston.format as any).colorize;
+
+    const streamCtor = (winston.transports as any).Stream;
+    const consoleCtor = (winston.transports as any).Console;
+    const stderrTransport = streamCtor
+      ? new streamCtor({
+          stream: process.stderr,
+          handleExceptions: false,
+          format: winston.format.combine(
+            typeof colorizeFactory === 'function' ? colorizeFactory() : winston.format.combine(),
+            typeof printfFactory === 'function'
+              ? printfFactory(
+                  ({ level, message, timestamp, stack, ...meta }: Record<string, unknown>) => {
+                    const rest = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
+                    const printable = stack || message;
+                    return `${timestamp} [${level}] ${printable}${rest}`;
+                  },
+                )
+              : winston.format.combine(),
+          ),
+        })
+      : new consoleCtor({
+          stderrLevels: ['error', 'warn', 'info', 'verbose', 'debug', 'silly'],
+          consoleWarnLevels: ['warn'],
+        });
+
+    const transports: winston.transport[] = [stderrTransport];
+
+    // Optional file logging controlled by env
+    const isFileLogEnabled =
+      process.env.MCP_LOG_ENABLE === 'true' || process.env.MCP_LOG_ENABLE === '1';
+    if (isFileLogEnabled) {
+      const logFilePath = process.env.MCP_LOG_FILE || 'kubeview-mcp.log';
+      transports.push(
+        new winston.transports.File({
+          filename: logFilePath,
+          format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
+        }),
+      );
+    }
+
+    const logger = winston.createLogger({
+      level: process.env.MCP_LOG_LEVEL || 'info',
+      format: baseFormat,
+      transports,
+      exitOnError: false,
+    });
+
+    // Forward logs to the MCP client only when explicitly requested
+    if (typeof (logger as any).add === 'function') {
+      logger.add(new MCPLoggingTransport(this.server, () => this.clientLoggingLevel));
+    }
+
+    return logger;
+  }
+
+  private parseLoggingLevel(level?: string): LoggingLevel | undefined {
+    if (!level) return undefined;
+    const normalized = level.toLowerCase();
+    const match = LoggingLevelSchema.safeParse(normalized);
+    return match.success ? match.data : undefined;
   }
 }

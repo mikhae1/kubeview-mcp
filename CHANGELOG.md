@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.4.0] - 2025-11-29
+
+### Added
+- **RunCode Tool Exposure**: Exposed `run_code` tool by default in standard mode alongside other tools.
+- **Code-Mode Prompt**: Added `code-mode` prompt for injecting the full TypeScript API documentation, tool overview, and examples into the context.
+
+### Changed
+- **Documentation**: Improved README.md to be more professional, valid, and concise.
+- **Name Change**: Changed name from `kubeview-mcp` to `kubeview` to align with the new MCP server name.
+- **Dependencies**: Updated deprecated dependencies.
+
+### Fixed
+- **Filter Logic**: `kube_list` now honors namespace/selector filters even when `resourceType` is omitted.
+- **Runtime Errors**: Fixed `ERR_MODULE_NOT_FOUND` for `typescript` package.
+- **Build Issues**: Resolved TypeScript compilation errors in `src/index.ts`.
+- **Logging**: Fixed "Required parameter name was null or undefined" error in `kube_log` and `kube_logs` tools.
+
 ## [1.3.0] - 2025-11-27
 
 ### Added
@@ -14,9 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TypeScript Transpilation**: Integrated TypeScript compiler for runtime transpilation of agent code (ES2022 target)
 - **Global Type Definitions**: Added `/sys/global.d.ts` resource providing TypeScript type definitions for all available tools
 - **Tool Executor**: Implemented tool executor allowing sandboxed code to call MCP tools internally
-- **Helper Functions**: Added `callMCPTool()`, `searchTools()`, and `getToolHelp()` helper functions for progressive tool discovery
+- **Helper Functions**: Added namespaced `tools.*` helpers for discovery (`tools.list()`, `tools.search()`, `tools.help()`, `tools.call()`) and execution
 - **Code-Mode Configuration**: Added `CodeModeConfig` with configurable sandbox limits (memory, timeout) and workspace settings
-- **Dual Mode Support**: Added `NODE_MODE=code` environment variable to run server in code-mode (exposes only `run_code` tool)
+- **Mode Support**: Added `MCP_MODE` environment variable with three modes:
+  - `code`: exposes only `run_code` tool
+  - `tools`: exposes only Kubernetes/Helm/Argo tools (no `run_code`)
+  - `all`: exposes both tools and `run_code` (default)
+  - Replaced `NODE_MODE=code` with `MCP_MODE=code|tools|all`
 
 ### Changed
 - **Plugin Architecture**: Removed version property from various tools plugins and MCPServer for simplified plugin management

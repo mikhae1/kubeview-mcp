@@ -13,6 +13,8 @@ import type {
   NormalizedArrayType,
 } from '../agent/codegen/types.js';
 import { CodeModeConfig } from '../utils/CodeModeConfig.js';
+import { getToolNamespace, toCamelCase, formatToolAccessor } from '../utils/toolNamespaces.js';
+import type { ToolNamespace } from '../utils/toolNamespaces.js';
 
 const runCodeInputSchema = z.object({
   code: z.string().describe('TypeScript code to execute via the sandboxed runtime'),
@@ -29,6 +31,14 @@ interface ManifestEntry {
     description?: string;
     inputSchema?: NormalizedSchema;
   }>;
+}
+
+interface ToolMetadata {
+  server: string;
+  name: string;
+  qualifiedName: string;
+  description?: string;
+  inputSchema?: NormalizedSchema;
 }
 
 type ToolExecutor = (toolName: string, args: unknown) => Promise<unknown>;
@@ -86,137 +96,21 @@ export class RunCodeTool {
     const params = runCodeInputSchema.parse(rawParams);
     const { code } = params;
 
-    // Collect console output
-    const logs: string[] = [];
-    const errors: string[] = [];
-
-    // Construct tools object
-    const toolsObj: any = {
-      kubernetes: {},
-      helm: {},
-      argo: {},
-      other: {},
-    };
-
     const manifest = this.loadManifestSync();
+    const toolMetadata = this.buildToolMetadata(manifest);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
 
-    for (const entry of manifest) {
-      for (const tool of entry.tools) {
-        let namespace = 'other';
-        let methodName = this.toCamelCase(tool.name);
-
-        if (tool.name.startsWith('kube_')) {
-          namespace = 'kubernetes';
-          methodName = this.toCamelCase(tool.name.replace('kube_', ''));
-        } else if (tool.name.startsWith('helm_')) {
-          namespace = 'helm';
-          methodName = this.toCamelCase(tool.name.replace('helm_', ''));
-        } else if (tool.name.startsWith('argo_')) {
-          namespace = 'argo';
-          methodName = this.toCamelCase(tool.name.replace('argo_', ''));
-        }
-
-        if (!toolsObj[namespace]) {
-          toolsObj[namespace] = {};
-        }
-
-        toolsObj[namespace][methodName] = async (args: any) => {
-          if (!this.toolExecutor) {
-            throw new Error('Tool executor not available');
-          }
-          const result = await this.toolExecutor(tool.qualifiedName, args || {});
-          return this.unwrapResult(result);
-        };
-      }
-    }
-
-    // Build individual tool helper functions for global scope
-    const toolHelpers: Record<string, any> = {};
-    for (const entry of manifest) {
-      for (const tool of entry.tools) {
-        const helperName = this.toCamelCase(tool.name);
-        toolHelpers[helperName] = async (args: any) => {
-          if (!this.toolExecutor) {
-            throw new Error('Tool executor not available');
-          }
-          const result = await this.toolExecutor(tool.qualifiedName, args || {});
-          return this.unwrapResult(result);
-        };
-      }
-    }
-
-    // Create sandbox context
     const context = vm.createContext({
-      console: {
-        log: (...args: unknown[]) => logs.push(args.map(String).join(' ')),
-        info: (...args: unknown[]) => logs.push(args.map(String).join(' ')),
-        warn: (...args: unknown[]) => logs.push('[WARN] ' + args.map(String).join(' ')),
-        error: (...args: unknown[]) => errors.push(args.map(String).join(' ')),
-      },
-      tools: toolsObj,
-      // Helper functions
-      callMCPTool: async (qualifiedName: string, args: any) => {
-        if (!this.toolExecutor) {
-          throw new Error('Tool executor not available');
-        }
-        const result = await this.toolExecutor(qualifiedName, args || {});
-        return this.unwrapResult(result);
-      },
-      searchTools: (query: string, limit = 10) => {
-        const normalized = query.toLowerCase();
-        return manifest
-          .flatMap((entry) =>
-            entry.tools.map((tool) => ({
-              server: entry.server,
-              name: tool.name,
-              qualifiedName: tool.qualifiedName,
-              description: tool.description,
-            })),
-          )
-          .filter(
-            (tool) =>
-              tool.name.toLowerCase().includes(normalized) ||
-              (tool.description ?? '').toLowerCase().includes(normalized),
-          )
-          .slice(0, limit);
-      },
-      getToolHelp: (toolName: string) => {
-        // Support both snake_case and camelCase
-        const normalized = toolName.replace(/([A-Z])/g, '_$1').toLowerCase();
-        for (const entry of manifest) {
-          const tool = entry.tools.find(
-            (t) =>
-              t.name === normalized || t.name === toolName || this.toCamelCase(t.name) === toolName,
-          );
-          if (tool) {
-            const params = tool.inputSchema
-              ? this.extractParametersFromSchema(tool.inputSchema)
-              : [];
-            return {
-              name: tool.name,
-              qualifiedName: tool.qualifiedName,
-              description: tool.description,
-              parameters: params,
-            };
-          }
-        }
-        return null;
-      },
-      // Add individual tool helpers to global scope
-      ...toolHelpers,
-      __result: undefined as unknown,
-      __error: undefined as unknown,
+      console: this.createConsoleCapture(stdout, stderr),
+      tools: this.createToolsNamespace(toolMetadata),
     });
 
     // Wrap code in async IIFE
     const wrappedCode = `
 (async () => {
-  try {
-    ${code}
-  } catch (e) {
-    __error = e;
-  }
-})().then((res) => { __result = res; }).catch(e => { __error = e; });
+${code}
+})();
 `;
 
     // Transpile TypeScript to JavaScript
@@ -230,83 +124,50 @@ export class RunCodeTool {
 
     try {
       const script = new vm.Script(transpiled, { filename: 'agent-code.js' });
-      await script.runInContext(context, { timeout: this.config.timeoutMs ?? 30000 });
+      const evaluation = script.runInContext(context, { timeout: this.config.timeoutMs ?? 30000 });
+      const result = await evaluation;
 
-      // Wait for async operations
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      if (context.__error) {
-        const err = context.__error as Error;
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(
-                {
-                  success: false,
-                  error: err.message || String(err),
-                  stdout: logs.join('\n'),
-                  stderr: errors.join('\n'),
-                },
-                null,
-                2,
-              ),
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(
-              {
-                success: true,
-                stdout: logs.join('\n'),
-                stderr: errors.join('\n'),
-                result: context.__result,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
+      return this.buildResponse({
+        success: true,
+        result,
+        stdout,
+        stderr,
+      });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(
-              {
-                success: false,
-                error: message,
-                stdout: logs.join('\n'),
-                stderr: errors.join('\n'),
-              },
-              null,
-              2,
-            ),
-          },
-        ],
+      const serializedError = this.serializeError(err);
+      return this.buildResponse({
+        success: false,
+        error: serializedError,
+        stdout,
+        stderr,
         isError: true,
-      };
+      });
     }
   }
 
   /**
    * Unwrap common list response formats to make the API easier to use.
-   * e.g. { pods: [...] } -> [...]
+   * Normalizes various response formats to { items: [...] } to match Kubernetes API standard format.
+   * Handles:
+   * - Arrays returned directly -> { items: [...] }
+   * - { pods: [...] }, { services: [...] }, etc. -> { items: [...] }
+   * - { items: [...] } -> returned as-is
    */
   private unwrapResult(result: any): any {
+    // If result is an array, wrap it in { items: [...] }
+    if (Array.isArray(result)) {
+      return { items: result };
+    }
+
     if (!result || typeof result !== 'object') return result;
 
-    // Check for common collection properties
+    // If it already has 'items', return as-is (already in standard format)
+    if (Array.isArray(result.items)) {
+      return result;
+    }
+
+    // Check for common collection properties and normalize to { items: [...] }
     const collectionProps = [
-      'items',
       'pods',
       'services',
       'deployments',
@@ -316,13 +177,23 @@ export class RunCodeTool {
       'persistentvolumeclaims',
       'secrets',
       'configmaps',
+      'replicasets',
+      'statefulsets',
+      'daemonsets',
+      'jobs',
+      'cronjobs',
+      'hpas',
+      'pdbs',
+      'endpoints',
+      'endpointslices',
+      'resourcequotas',
+      'limitranges',
     ];
 
     for (const prop of collectionProps) {
       if (Array.isArray(result[prop])) {
-        // If it's the only significant property (ignoring total, namespace, etc.), return it
-        // Or just prefer returning the list for "Code Mode" usability
-        return result[prop];
+        // Convert { pods: [...] } to { items: [...] } for consistency
+        return { items: result[prop] };
       }
     }
 
@@ -343,101 +214,356 @@ export class RunCodeTool {
   }
 
   private buildDescription(): string {
-    const tools = this.getToolSchemaSummaries();
-    const overviewTree = this.descriptionBuilder.buildOverviewTree(tools);
-
-    return `Execute TypeScript code in a sandboxed Node.js environment.
-This tool allows you to write and execute scripts to interact with the Kubernetes cluster using the exposed tools.
-
-## Environment
-- **Runtime**: Node.js (vm)
-- **Language**: TypeScript (transpiled to ES2022)
-- **Top-level await**: Supported
-- **Global Object**: \`tools\` (contains all available MCP tools)
+    return `Execute TypeScript code to debug Kubernetes, Helm, Argo Workflow, and ArgoCD resources.
+Supports top-level await and has access to the global 'tools' object for all MCP operations.
 
 ## API Reference
-The \`tools\` object is namespaced by plugin/category.
-Reference \`/sys/global.d.ts\` to see the exact TypeScript interfaces for the tools object.
-
-${overviewTree}
+- **Language**: TypeScript (transpiled to ES2022)
+- **Global Object**: \`tools\` (contains all available MCP tools)
+- **Top-level await**: use \`return\` to return values from your script.
+- **Type Definitions**: Reference \`/sys/global.d.ts\` for full types.
 
 ## Key Functions
 
 ### Helper Functions
-- **\`callMCPTool(qualifiedName, args)\`** - Call any MCP tool by its qualified name
-- **\`searchTools(query, limit?)\`** - Search for tools by name or description
-- **\`getToolHelp(toolName)\`** - Get detailed help for a specific tool
+- **\`tools.list()\`** - Enumerate tools (optionally filtered by server)
+- **\`tools.search(query, limit?)\`** - Search for tools by name or description
+- **\`tools.help(toolName)\`** - Detailed documentation for a specific tool
 
-### Individual Tool Helpers
-Each tool is also available as a camelCase function in the global scope (e.g., \`kubeList()\`, \`helmGet()\`, \`argoLogs()\`).
-
-## Quick Start
-
-\`\`\`typescript
-// Search for available tools
-const podTools = searchTools('pods');
-console.log(podTools);
-
-// Get help for a specific tool
-const help = getToolHelp('kubeList');
-console.log(help);
-
-// Use individual helper functions directly
-const pods = await kubeList({ resourceType: 'pod', namespace: 'default' });
-console.log(\`Found \${pods.length} pods\`);
-\`\`\`
+### Namespaced Functions
+Call tools via namespaces: \`tools.kubernetes.*\`, \`tools.helm.*\`, \`tools.argo.*\`, \`tools.argocd.*\`.
 
 ## Example Usage
 
 \`\`\`typescript
-// List pods in the default namespace
-const pods = await tools.kubernetes.list({
-  resourceType: 'pod',
-  namespace: 'default'
-});
-console.log(\`Found \${pods.length} pods\`);
+// Search for available tools
+const matches = tools.search('pods');
 
+// Inspect a specific tool
+const docs = tools.help('kubeList');
+
+// Call helper MCP tool functions
+const pods = await tools.kubernetes.list({ namespace: 'default' });
+return pods.items?.filter((pod) => pod.status?.phase === 'Running');
+\`\`\`
+`;
+  }
+
+  /**
+   * Generate prompt content with tool overview and additional examples.
+   * Used by the code-mode prompt for progressive disclosure.
+   */
+  public getPromptContent(): string {
+    const tools = this.getToolSchemaSummaries();
+    const overviewTree = this.descriptionBuilder.buildOverviewTree(tools);
+
+    return `# Code mode execution environment
+
+    When using \`run_code\`, you are writing TypeScript that executes in a sandboxed Node.js (ES2022) runtime with
+    top-level \`await\` and a strongly-typed global \`tools\` object for all MCP operations.
+    Always \`return\` values from your script instead of console.log them; the server wraps your return value into a structured result object.
+
+
+    ## Available Tools
+
+    ${overviewTree}
+
+
+    ## How to write code
+
+    - Use TypeScript with top-level \`await\`.
+    - Access Kubernetes, Helm, Argo, ArgoCD, and other capabilities through the \`tools\` namespaces (see \`/sys/global.d.ts\` for full types).
+    - Prefer pure, deterministic code: collect data via \`tools.*\` calls, transform it, and \`return\` the final value.
+    - Avoid any destructive operations (create/update/delete).
+    - Do not use \`kubectl\` or other CLI tools directly.
+
+
+    ## Output format (server wrapper)
+
+    Your script itself should just \`return\` a value (object, array, string, number, etc.). The server then wraps it into the following object:
+
+    - \`success\`: boolean — \`true\` when the script executed without uncaught errors.
+    - \`result\`: the value returned from your script. Complex values are serialized using \`JSON.stringify\`.
+    - \`stdout\`: captured \`console.log\` / \`console.info\` output. Typically used for debugging; may be omitted when \`result\` is present.
+    - \`stderr\`: captured \`console.error\` / \`console.warn\` output, if any.
+    - \`error\`: error message and stack information when \`success\` is \`false\`.
+
+
+## Usage Examples
+
+
+### Filtering and Processing Results
+
+
+\`\`\`typescript
+// Get all pods in CrashLoopBackOff state
+const pods = await tools.kubernetes.list({});
+return pods.items?.filter((pod) =>
+  pod.status?.containerStatuses?.some((cs) => cs.state?.waiting?.reason === 'CrashLoopBackOff')
+);
+\`\`\`
+
+
+\`\`\`typescript
 // Get logs for a specific pod
-const logs = await tools.kubernetes.logs({
+return await tools.kubernetes.logs({
   podName: 'my-pod', // alias: name
   namespace: 'default'
 });
-console.log(logs);
 \`\`\`
 
-## Output Format
-The tool returns a JSON object with:
-- \`success\`: boolean
-- \`stdout\`: string (captured console.log output)
-- \`stderr\`: string (captured console.error output)
-- \`result\`: any (the return value of the script)
+
+\`\`\`typescript
+// Get resource usage across namespaces
+const namespaces = await tools.kubernetes.listNamespaces({});
+const results = [];
+for (const ns of namespaces.items || []) {
+  const pods = await tools.kubernetes.list({ namespace: ns.metadata?.name });
+  results.push({ namespace: ns.metadata?.name, podCount: pods.items?.length || 0 });
+}
+return results.sort((a, b) => b.podCount - a.podCount);
+\`\`\`
+
+
+### Deployments
+
+
+\`\`\`typescript
+// Get deployment status with replica info
+const deploy = await tools.kubernetes.get({
+  kind: 'deployment',
+  name: 'my-deployment',
+  namespace: 'default'
+});
+return {
+  name: deploy.metadata?.name,
+  replicas: deploy.status?.replicas,
+  ready: deploy.status?.readyReplicas,
+  available: deploy.status?.availableReplicas
+};
+\`\`\`
+
+
+### Helm Operations
+
+
+\`\`\`typescript
+// List all helm releases across namespaces
+return await tools.helm.list({ allNamespaces: true });
+\`\`\`
+
+
+\`\`\`typescript
+// Get values from a helm release
+return await tools.helm.get({
+  name: 'my-release',
+  namespace: 'default',
+  output: 'values'
+});
+\`\`\`
 `;
+  }
+
+  /**
+   * Build a list of tool metadata from the manifest.
+   */
+  private buildToolMetadata(manifest: ManifestEntry[]): ToolMetadata[] {
+    return manifest.flatMap((entry) =>
+      entry.tools.map((tool) => ({
+        server: entry.server,
+        name: tool.name,
+        qualifiedName: tool.qualifiedName,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      })),
+    );
+  }
+
+  private createToolsNamespace(tools: ToolMetadata[]) {
+    const namespaces: Record<string, Record<string, (args: any) => Promise<any>>> = {
+      kubernetes: {},
+      helm: {},
+      argo: {},
+      argocd: {},
+      other: {},
+    };
+
+    for (const tool of tools) {
+      const { namespace, methodName } = getToolNamespace(tool.name);
+      if (!namespaces[namespace]) {
+        namespaces[namespace] = {};
+      }
+      namespaces[namespace][methodName] = (args: any) => this.invokeTool(tool.qualifiedName, args);
+    }
+
+    const list = (server?: string) => {
+      const filtered = server ? tools.filter((t) => t.server === server) : tools;
+      return filtered.map((t) => ({
+        ...t,
+        name: formatToolAccessor(t.name),
+      }));
+    };
+
+    const search = (query: string, limit = 10) => {
+      const normalized = query.toLowerCase();
+      return tools
+        .filter(
+          (tool) =>
+            tool.name.toLowerCase().includes(normalized) ||
+            (tool.description ?? '').toLowerCase().includes(normalized),
+        )
+        .slice(0, limit);
+    };
+
+    const help = (toolName: string) => {
+      const tool = this.findToolByName(toolName, tools);
+      if (!tool) return null;
+      const params = tool.inputSchema ? this.extractParametersFromSchema(tool.inputSchema) : [];
+      return {
+        name: tool.name,
+        qualifiedName: tool.qualifiedName,
+        description: tool.description,
+        parameters: params,
+      };
+    };
+
+    const call = (qualifiedName: string, args?: Record<string, unknown>) =>
+      this.invokeTool(qualifiedName, args);
+
+    const servers = () => Array.from(new Set(tools.map((t) => t.server)));
+
+    return {
+      kubernetes: namespaces.kubernetes,
+      helm: namespaces.helm,
+      argo: namespaces.argo,
+      argocd: namespaces.argocd,
+      other: namespaces.other,
+      list,
+      search,
+      help,
+      call,
+      servers,
+    };
+  }
+
+  private findToolByName(toolName: string, tools: ToolMetadata[]): ToolMetadata | undefined {
+    if (!toolName) return undefined;
+    const normalized = toolName.replace(/([A-Z])/g, '_$1').toLowerCase();
+    return tools.find(
+      (tool) =>
+        tool.name === normalized ||
+        tool.name === toolName ||
+        toCamelCase(tool.name) === toolName ||
+        toCamelCase(tool.name) === toCamelCase(toolName),
+    );
+  }
+
+  private createConsoleCapture(stdout: string[], stderr: string[]) {
+    const format = (args: unknown[]) =>
+      args.map((arg) => this.stringifyConsoleValue(arg)).join(' ');
+    return {
+      log: (...args: unknown[]) => stdout.push(format(args)),
+      info: (...args: unknown[]) => stdout.push(format(args)),
+      warn: (...args: unknown[]) => stderr.push(format(args)),
+      error: (...args: unknown[]) => stderr.push(format(args)),
+    };
+  }
+
+  private stringifyConsoleValue(value: unknown): string {
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (value instanceof Error) {
+      return value.stack ?? value.message;
+    }
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  private serializeError(error: unknown) {
+    if (error && typeof error === 'object') {
+      const errObject = error as { message?: unknown; name?: unknown; stack?: unknown };
+      return {
+        message: typeof errObject.message === 'string' ? errObject.message : JSON.stringify(error),
+        name: typeof errObject.name === 'string' ? errObject.name : 'Error',
+        stack: typeof errObject.stack === 'string' ? errObject.stack : undefined,
+      };
+    }
+    return {
+      message: typeof error === 'string' ? error : String(error),
+      name: 'Error',
+    };
+  }
+
+  private buildResponse({
+    success,
+    result,
+    error,
+    stdout,
+    stderr,
+    isError,
+  }: {
+    success: boolean;
+    result?: unknown;
+    error?: unknown;
+    stdout: string[];
+    stderr: string[];
+    isError?: boolean;
+  }) {
+    const stdoutText = stdout.join('\n').trimEnd();
+    const stderrText = stderr.join('\n').trimEnd();
+
+    const payload: Record<string, unknown> = {
+      success,
+    };
+
+    if (typeof result !== 'undefined') {
+      payload.result = result;
+    }
+
+    if (error) {
+      payload.error = error;
+    }
+
+    if (stdoutText && !(success && typeof result !== 'undefined')) {
+      payload.stdout = stdoutText;
+    }
+
+    if (stderrText) {
+      payload.stderr = stderrText;
+    }
+
+    if (isError) {
+      payload.isError = true;
+    }
+
+    return payload;
+  }
+
+  private async invokeTool(qualifiedName: string, args: unknown): Promise<any> {
+    if (!this.toolExecutor) {
+      throw new Error('Tool executor not available');
+    }
+    const result = await this.toolExecutor(qualifiedName, args || {});
+    return this.unwrapResult(result);
   }
 
   public generateGlobalDts(): string {
     const manifest = this.loadManifestSync();
-    const namespaces: Record<string, string[]> = {};
+    const namespaces: Record<ToolNamespace, string[]> = {
+      kubernetes: [],
+      helm: [],
+      argo: [],
+      argocd: [],
+      other: [],
+    };
 
     for (const entry of manifest) {
       for (const tool of entry.tools) {
-        let namespace = 'other';
-        let methodName = this.toCamelCase(tool.name);
-
-        if (tool.name.startsWith('kube_')) {
-          namespace = 'kubernetes';
-          methodName = this.toCamelCase(tool.name.replace('kube_', ''));
-        } else if (tool.name.startsWith('helm_')) {
-          namespace = 'helm';
-          methodName = this.toCamelCase(tool.name.replace('helm_', ''));
-        } else if (tool.name.startsWith('argo_')) {
-          namespace = 'argo';
-          methodName = this.toCamelCase(tool.name.replace('argo_', ''));
-        }
-
-        if (!namespaces[namespace]) {
-          namespaces[namespace] = [];
-        }
-
+        const { namespace, methodName } = getToolNamespace(tool.name);
         const argsType = tool.inputSchema
           ? this.jsonSchemaToTs(tool.inputSchema)
           : 'Record<string, any>';
@@ -449,13 +575,42 @@ The tool returns a JSON object with:
     }
 
     const namespaceDefs = Object.entries(namespaces)
-      .map(([ns, methods]) => `  export const ${ns}: {\n${methods.join('\n')}\n  };`)
+      .map(([ns, methods]) => {
+        const body = methods.length ? methods.join('\n') : '    // No tools registered';
+        return `  export const ${ns}: {\n${body}\n  };`;
+      })
       .join('\n');
 
     return `
 declare global {
+  interface ToolSummary {
+    server: string;
+    name: string;
+    qualifiedName: string;
+    description?: string;
+  }
+
+  interface ToolParameter {
+    name: string;
+    type: string;
+    required: boolean;
+    description?: string;
+  }
+
+  interface ToolHelp {
+    name: string;
+    qualifiedName: string;
+    description?: string;
+    parameters: ToolParameter[];
+  }
+
   const tools: {
 ${namespaceDefs}
+    list(server?: string): ToolSummary[];
+    search(query: string, limit?: number): ToolSummary[];
+    help(toolName: string): ToolHelp | null;
+    call<T = unknown>(qualifiedName: string, args?: Record<string, any>): Promise<T>;
+    servers(): string[];
   };
 }
 `;
@@ -479,6 +634,8 @@ ${namespaceDefs}
         })),
       },
     ];
+    // Rebuild description now that tools are available
+    this.tool.description = this.buildDescription();
   }
 
   private jsonSchemaToTs(schema: any): string {
@@ -541,10 +698,6 @@ ${namespaceDefs}
     }
 
     return 'any';
-  }
-
-  private toCamelCase(name: string): string {
-    return name.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
   }
 
   private extractParametersFromSchema(schema: NormalizedSchema): Array<{
