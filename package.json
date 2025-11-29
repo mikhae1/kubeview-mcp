@@ -17,13 +17,11 @@
   },
   "files": [
     "bin/",
-    "src/",
     "dist/",
-    "*.md",
-    "*.json"
+    "*.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/build-version.js && tsc",
     "dev": "tsx --watch src/cli/cli.ts",
     "start": "tsc && node bin/kubeview-mcp.js",
     "setup": "node bin/setup.js",

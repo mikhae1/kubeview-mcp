@@ -18,7 +18,7 @@ import { ArgoToolsPlugin } from './plugins/ArgoToolsPlugin.js';
 import { ArgoCDToolsPlugin } from './plugins/ArgoCDToolsPlugin.js';
 import { RunCodeTool } from './tools/RunCodeTool.js';
 
-export const VERSION = '0.1.0';
+export { VERSION } from './version.js';
 
 import { loadCodeModeConfig } from './utils/CodeModeConfig.js';
 
