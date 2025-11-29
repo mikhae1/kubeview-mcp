@@ -233,7 +233,7 @@ Supports top-level await and has access to the global 'tools' object for all MCP
 ### Namespaced Functions
 Call tools via namespaces: \`tools.kubernetes.*\`, \`tools.helm.*\`, \`tools.argo.*\`, \`tools.argocd.*\`.
 
-## Quick Start
+## Example Usage
 
 \`\`\`typescript
 // Search for available tools
@@ -274,8 +274,8 @@ return pods.items?.filter((pod) => pod.status?.phase === 'Running');
     - Use TypeScript with top-level \`await\`.
     - Access Kubernetes, Helm, Argo, ArgoCD, and other capabilities through the \`tools\` namespaces (see \`/sys/global.d.ts\` for full types).
     - Prefer pure, deterministic code: collect data via \`tools.*\` calls, transform it, and \`return\` the final value.
-    - Use \`console.log\` only for lightweight debugging; the primary output should come from the \`return\` statement.
     - Avoid any destructive operations (create/update/delete).
+    - Do not use \`kubectl\` or other CLI tools directly.
 
 
     ## Output format (server wrapper)

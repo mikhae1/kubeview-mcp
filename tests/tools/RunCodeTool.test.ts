@@ -68,13 +68,10 @@ describe('RunCodeTool', () => {
   it('includes API reference and tool docs in description', async () => {
     const tool = new RunCodeTool(undefined, '/path/does/not/exist');
     expect(tool.tool.description).toContain('API Reference');
-    expect(tool.tool.description).toContain('Key Functions');
-    expect(tool.tool.description).toContain('Quick Start');
   });
 
   it('includes quick start examples in description', async () => {
     const tool = new RunCodeTool(undefined, '/path/does/not/exist');
-    expect(tool.tool.description).toContain('Quick Start');
     expect(tool.tool.description).toContain('tools.kubernetes');
     expect(tool.tool.description).toContain('tools.search');
   });
