@@ -57,17 +57,21 @@ export class ToolDescriptionBuilder {
     const lines: string[] = [];
 
     for (const [server, serverTools] of grouped) {
-      lines.push(`/${server}/`);
+      // Skip server header for "local" server
+      if (server !== 'local') {
+        lines.push(`/${server}/`);
+      }
       for (let i = 0; i < serverTools.length; i++) {
         const tool = serverTools[i];
         const prefix = i === serverTools.length - 1 ? '└── ' : '├── ';
         const accessor = formatToolAccessor(tool.toolName);
         const shortDesc = this.truncate(tool.description, 50);
-        lines.push(`  ${prefix}${accessor}()${shortDesc ? ' - ' + shortDesc : ''}`);
+        const indent = server === 'local' ? '' : '  ';
+        lines.push(`${indent}${prefix}${accessor}()${shortDesc ? ' - ' + shortDesc : ''}`);
       }
     }
 
-    return lines.join('\n');
+    return lines.length > 0 ? lines.join('\n') : '';
   }
 
   /**

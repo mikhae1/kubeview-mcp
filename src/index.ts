@@ -72,6 +72,20 @@ async function startCodeMode(server: MCPServer): Promise<void> {
     text: runCodeTool.generateGlobalDts(),
   } as Resource & { text: string });
 
+  // Register code-mode prompt with tool overview and examples
+  server.registerPrompt({
+    name: 'code-mode',
+    description:
+      'Injects TypeScript definitions and API docs for Code Mode with tool overview and examples.',
+    arguments: [],
+    getMessages: async () => [
+      {
+        role: 'user',
+        content: { type: 'text', text: runCodeTool.getPromptContent() },
+      },
+    ],
+  });
+
   await server.start();
   console.error(
     `KubeView MCP is running in code-mode. ` +
@@ -144,6 +158,20 @@ async function startAllMode(server: MCPServer): Promise<void> {
     mimeType: 'application/typescript',
     text: runCodeTool.generateGlobalDts(),
   } as Resource & { text: string });
+
+  // Register code-mode prompt with tool overview and examples
+  server.registerPrompt({
+    name: 'code-mode',
+    description:
+      'Injects TypeScript definitions and API docs for Code Mode with tool overview and examples.',
+    arguments: [],
+    getMessages: async () => [
+      {
+        role: 'user',
+        content: { type: 'text', text: runCodeTool.getPromptContent() },
+      },
+    ],
+  });
 
   await server.start();
   console.error(`KubeView MCP is running. Waiting for connections...`);

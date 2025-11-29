@@ -1,5 +1,5 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { promises as fsPromises, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import path from 'path';
 import vm from 'node:vm';
 import ts from 'typescript';
@@ -54,8 +54,6 @@ export class RunCodeTool {
   private toolExecutor?: ToolExecutor;
   private readonly descriptionBuilder = new ToolDescriptionBuilder();
   private readonly config: CodeModeConfig['sandbox'];
-  private readonly sandboxWorkspaceDir = path.resolve(process.cwd(), '.run_code_workspace');
-  private workspaceReady = false;
 
   constructor(
     config: CodeModeConfig['sandbox'] = { memoryLimitMb: 256, timeoutMs: 5000 },
@@ -100,14 +98,12 @@ export class RunCodeTool {
 
     const manifest = this.loadManifestSync();
     const toolMetadata = this.buildToolMetadata(manifest);
-    await this.ensureSandboxWorkspace();
     const stdout: string[] = [];
     const stderr: string[] = [];
 
     const context = vm.createContext({
       console: this.createConsoleCapture(stdout, stderr),
       tools: this.createToolsNamespace(toolMetadata),
-      fs: this.createFsNamespace(),
     });
 
     // Wrap code in async IIFE
@@ -218,34 +214,24 @@ ${code}
   }
 
   private buildDescription(): string {
-    const tools = this.getToolSchemaSummaries();
-    const overviewTree = this.descriptionBuilder.buildOverviewTree(tools);
-
-    return `Execute TypeScript code in a sandboxed Node.js environment with access to namespaced Kubernetes, Helm, Argo, and ArgoCD tools.
-Use 'return' to output data; supports top-level await and has access to the global 'tools' object for all MCP operations.
-
-## Environment
-- **Runtime**: Node.js (vm)
-- **Language**: TypeScript (transpiled to ES2022)
-- **Global Object**: \`tools\` (contains all available MCP tools)
-- **Top-level await**: Supported, use \`return\` to return values from your script.
+    return `Execute TypeScript code to debug Kubernetes, Helm, Argo Workflow, and ArgoCD resources.
+Supports top-level await and has access to the global 'tools' object for all MCP operations.
 
 ## API Reference
-The \`tools\` object is namespaced by plugin/category.
-Reference \`/sys/global.d.ts\` to see the exact TypeScript interfaces for the tools object.
-
-${overviewTree}
+- **Language**: TypeScript (transpiled to ES2022)
+- **Global Object**: \`tools\` (contains all available MCP tools)
+- **Top-level await**: use \`return\` to return values from your script.
+- **Type Definitions**: Reference \`/sys/global.d.ts\` for full types.
 
 ## Key Functions
 
 ### Helper Functions
-- **\`tools.list(server?)\`** - Enumerate tools (optionally filtered by server)
+- **\`tools.list()\`** - Enumerate tools (optionally filtered by server)
 - **\`tools.search(query, limit?)\`** - Search for tools by name or description
 - **\`tools.help(toolName)\`** - Detailed documentation for a specific tool
-- **\`tools.call(qualifiedName, args)\`** - Call any MCP tool by its qualified name
 
-### Tool Access
-Call tools via namespaces: \`tools.kubernetes.list()\`, \`tools.helm.get()\`, \`tools.argo.logs()\`, \`tools.argocd.app()\`, \`tools.other.*\`.
+### Namespaced Functions
+Call tools via namespaces: \`tools.kubernetes.*\`, \`tools.helm.*\`, \`tools.argo.*\`, \`tools.argocd.*\`.
 
 ## Quick Start
 
@@ -256,18 +242,69 @@ const matches = tools.search('pods');
 // Inspect a specific tool
 const docs = tools.help('kubeList');
 
-// Call helper functions directly and return data
+// Call helper MCP tool functions
 const pods = await tools.kubernetes.list({ namespace: 'default' });
 return pods.items?.filter((pod) => pod.status?.phase === 'Running');
 \`\`\`
+`;
+  }
 
-## Example Usage
+  /**
+   * Generate prompt content with tool overview and additional examples.
+   * Used by the code-mode prompt for progressive disclosure.
+   */
+  public getPromptContent(): string {
+    const tools = this.getToolSchemaSummaries();
+    const overviewTree = this.descriptionBuilder.buildOverviewTree(tools);
+
+    return `# Code mode execution environment
+
+    When using \`run_code\`, you are writing TypeScript that executes in a sandboxed Node.js (ES2022) runtime with
+    top-level \`await\` and a strongly-typed global \`tools\` object for all MCP operations.
+    Always \`return\` values from your script instead of console.log them; the server wraps your return value into a structured result object.
+
+
+    ## Available Tools
+
+    ${overviewTree}
+
+
+    ## How to write code
+
+    - Use TypeScript with top-level \`await\`.
+    - Access Kubernetes, Helm, Argo, ArgoCD, and other capabilities through the \`tools\` namespaces (see \`/sys/global.d.ts\` for full types).
+    - Prefer pure, deterministic code: collect data via \`tools.*\` calls, transform it, and \`return\` the final value.
+    - Use \`console.log\` only for lightweight debugging; the primary output should come from the \`return\` statement.
+    - Avoid any destructive operations (create/update/delete).
+
+
+    ## Output format (server wrapper)
+
+    Your script itself should just \`return\` a value (object, array, string, number, etc.). The server then wraps it into the following object:
+
+    - \`success\`: boolean — \`true\` when the script executed without uncaught errors.
+    - \`result\`: the value returned from your script. Complex values are serialized using \`JSON.stringify\`.
+    - \`stdout\`: captured \`console.log\` / \`console.info\` output. Typically used for debugging; may be omitted when \`result\` is present.
+    - \`stderr\`: captured \`console.error\` / \`console.warn\` output, if any.
+    - \`error\`: error message and stack information when \`success\` is \`false\`.
+
+
+## Usage Examples
+
+
+### Filtering and Processing Results
+
 
 \`\`\`typescript
-// List all pods
+// Get all pods in CrashLoopBackOff state
 const pods = await tools.kubernetes.list({});
-return pods.items;
+return pods.items?.filter((pod) =>
+  pod.status?.containerStatuses?.some((cs) => cs.state?.waiting?.reason === 'CrashLoopBackOff')
+);
+\`\`\`
 
+
+\`\`\`typescript
 // Get logs for a specific pod
 return await tools.kubernetes.logs({
   podName: 'my-pod', // alias: name
@@ -275,16 +312,61 @@ return await tools.kubernetes.logs({
 });
 \`\`\`
 
-## Output Format
-Returns an object with the following properties:
-- \`success\`: boolean
-- \`result\`: value returned from your script (objects/arrays are serialized using JSON.stringify)
-- \`stdout\`: captured console.log/info output (only if success is false or result is empty)
-- \`stderr\`: captured console.error/warn output (if not empty)
-- \`error\`: message when \`success\` is false (includes stack info)
+
+\`\`\`typescript
+// Get resource usage across namespaces
+const namespaces = await tools.kubernetes.listNamespaces({});
+const results = [];
+for (const ns of namespaces.items || []) {
+  const pods = await tools.kubernetes.list({ namespace: ns.metadata?.name });
+  results.push({ namespace: ns.metadata?.name, podCount: pods.items?.length || 0 });
+}
+return results.sort((a, b) => b.podCount - a.podCount);
+\`\`\`
+
+
+### Deployments
+
+
+\`\`\`typescript
+// Get deployment status with replica info
+const deploy = await tools.kubernetes.get({
+  kind: 'deployment',
+  name: 'my-deployment',
+  namespace: 'default'
+});
+return {
+  name: deploy.metadata?.name,
+  replicas: deploy.status?.replicas,
+  ready: deploy.status?.readyReplicas,
+  available: deploy.status?.availableReplicas
+};
+\`\`\`
+
+
+### Helm Operations
+
+
+\`\`\`typescript
+// List all helm releases across namespaces
+return await tools.helm.list({ allNamespaces: true });
+\`\`\`
+
+
+\`\`\`typescript
+// Get values from a helm release
+return await tools.helm.get({
+  name: 'my-release',
+  namespace: 'default',
+  output: 'values'
+});
+\`\`\`
 `;
   }
 
+  /**
+   * Build a list of tool metadata from the manifest.
+   */
   private buildToolMetadata(manifest: ManifestEntry[]): ToolMetadata[] {
     return manifest.flatMap((entry) =>
       entry.tools.map((tool) => ({
@@ -395,7 +477,7 @@ Returns an object with the following properties:
       return value.stack ?? value.message;
     }
     try {
-      return JSON.stringify(value, null, 2);
+      return JSON.stringify(value);
     } catch {
       return String(value);
     }
@@ -405,10 +487,7 @@ Returns an object with the following properties:
     if (error && typeof error === 'object') {
       const errObject = error as { message?: unknown; name?: unknown; stack?: unknown };
       return {
-        message:
-          typeof errObject.message === 'string'
-            ? errObject.message
-            : JSON.stringify(error, null, 2),
+        message: typeof errObject.message === 'string' ? errObject.message : JSON.stringify(error),
         name: typeof errObject.name === 'string' ? errObject.name : 'Error',
         stack: typeof errObject.stack === 'string' ? errObject.stack : undefined,
       };
@@ -472,48 +551,6 @@ Returns an object with the following properties:
     return this.unwrapResult(result);
   }
 
-  private async ensureSandboxWorkspace(): Promise<void> {
-    if (this.workspaceReady) {
-      return;
-    }
-    await fsPromises.mkdir(this.sandboxWorkspaceDir, { recursive: true });
-    this.workspaceReady = true;
-  }
-
-  private resolveWorkspacePath(target?: string): string {
-    const candidate = path.resolve(this.sandboxWorkspaceDir, target ?? '.');
-    if (!candidate.startsWith(this.sandboxWorkspaceDir)) {
-      throw new Error('Workspace access outside of sandbox is not allowed');
-    }
-    return candidate;
-  }
-
-  private createFsNamespace() {
-    return {
-      readFile: async (filePath: string) => {
-        const target = this.resolveWorkspacePath(filePath);
-        return fsPromises.readFile(target, 'utf-8');
-      },
-      writeFile: async (filePath: string, data: string) => {
-        const target = this.resolveWorkspacePath(filePath);
-        await fsPromises.mkdir(path.dirname(target), { recursive: true });
-        return fsPromises.writeFile(target, data ?? '', 'utf-8');
-      },
-      listDir: async (dir?: string) => {
-        const target = this.resolveWorkspacePath(dir ?? '.');
-        return fsPromises.readdir(target);
-      },
-      exists: async (filePath: string) => {
-        try {
-          await fsPromises.access(this.resolveWorkspacePath(filePath));
-          return true;
-        } catch {
-          return false;
-        }
-      },
-    };
-  }
-
   public generateGlobalDts(): string {
     const manifest = this.loadManifestSync();
     const namespaces: Record<ToolNamespace, string[]> = {
@@ -575,13 +612,6 @@ ${namespaceDefs}
     call<T = unknown>(qualifiedName: string, args?: Record<string, any>): Promise<T>;
     servers(): string[];
   };
-
-  const fs: {
-    readFile(path: string): Promise<string>;
-    writeFile(path: string, data: string): Promise<void>;
-    listDir(path?: string): Promise<string[]>;
-    exists(path: string): Promise<boolean>;
-  };
 }
 `;
   }
@@ -604,6 +634,8 @@ ${namespaceDefs}
         })),
       },
     ];
+    // Rebuild description now that tools are available
+    this.tool.description = this.buildDescription();
   }
 
   private jsonSchemaToTs(schema: any): string {

@@ -39,6 +39,18 @@ interface ToolEntry {
 }
 
 /**
+ * Prompt registry entry
+ */
+interface PromptEntry {
+  name: string;
+  description?: string;
+  arguments?: Array<{ name: string; description?: string; required?: boolean }>;
+  getMessages: (
+    args?: Record<string, string>,
+  ) => Promise<Array<{ role: string; content: { type: string; text: string } }>>;
+}
+
+/**
  * Core MCP Server implementation for Kubernetes operations
  */
 export interface MCPServerOptions {
@@ -54,6 +66,7 @@ export class MCPServer {
   private resources: Map<string, Resource> = new Map();
   private resourceTemplates: Map<string, ResourceTemplate> = new Map();
   private plugins: Map<string, MCPPlugin> = new Map();
+  private prompts: Map<string, PromptEntry> = new Map();
   private isShuttingDown = false;
   private options: MCPServerOptions;
   private eventListeners: Array<{
@@ -403,15 +416,30 @@ export class MCPServer {
 
     // Handle prompt listing
     this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
-      this.logger.debug('Listing prompts (none available)');
-      return { prompts: [] };
+      const prompts = Array.from(this.prompts.values()).map((entry) => ({
+        name: entry.name,
+        description: entry.description,
+        arguments: entry.arguments,
+      }));
+      this.logger.debug(`Listing ${prompts.length} prompts`);
+      return { prompts };
     });
 
     // Handle prompt getting
     this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-      const error = `Prompt not found: ${request.params.name}`;
-      this.logger.error(error);
-      throw new Error(error);
+      const promptEntry = this.prompts.get(request.params.name);
+      if (!promptEntry) {
+        const error = `Prompt not found: ${request.params.name}`;
+        this.logger.error(error);
+        throw new Error(error);
+      }
+
+      this.logger.info(`Getting prompt: ${request.params.name}`);
+      const messages = await promptEntry.getMessages(request.params.arguments);
+      return {
+        description: promptEntry.description,
+        messages,
+      };
     });
   }
 
@@ -455,6 +483,18 @@ export class MCPServer {
 
     this.resources.set(resource.uri, resource);
     this.logger.info(`Registered resource: ${resource.uri}`);
+  }
+
+  /**
+   * Register a prompt with the MCP server
+   */
+  public registerPrompt(prompt: PromptEntry): void {
+    if (this.prompts.has(prompt.name)) {
+      this.logger.warn(`Prompt already registered: ${prompt.name}, overwriting`);
+    }
+
+    this.prompts.set(prompt.name, prompt);
+    this.logger.info(`Registered prompt: ${prompt.name}`);
   }
 
   /**
