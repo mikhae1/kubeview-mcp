@@ -34,13 +34,14 @@
     "typecheck": "tsc --noEmit",
     "prepare": "husky",
     "command": "node src/cli/run-command.js",
-    "release": "npm run release:check && npm run release:qa && npm run release:build && npm run publish:tag",
     "release:check": "git diff --exit-code -- package.json server.json CHANGELOG.md && git diff --cached --exit-code -- package.json server.json CHANGELOG.md || { echo 'Error: package.json, server.json, or CHANGELOG.md already have changes. Please commit or stash them before releasing.'; exit 1; }",
     "release:qa": "npm run lint && npm run typecheck && npm run test",
     "release:build": "npm run build",
     "release:version": "node scripts/update-version.js",
-    "publish:tag": "npm run release:version && git tag v$(node -p \"require('./package.json').version\") && echo 'Tagged version v'$(node -p \"require('./package.json').version\")",
-    "publish": "npm run publish:tag && npm publish && git push origin master --tags"
+    "release": "npm run release:check && npm run release:qa && npm run release:build && npm run publish:tag",
+    "publish:tag": "git tag v$(node -p \"require('./package.json').version\") && echo 'Tagged version v'$(node -p \"require('./package.json').version\")",
+    "publish:all": "npm publish && git push origin master --tags",
+    "publish": "npm run release:version && npm run publish:tag && npm run publish:all"
   },
   "keywords": [
     "kubernetes",
