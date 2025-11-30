@@ -1,7 +1,8 @@
 {
   "name": "kubeview-mcp",
   "version": "1.4.1",
-  "description": "Read-only MCP server for AI-powered Kubernetes introspection",
+  "description": "Read-only MCP server enabling code-driven AI analysis of Kubernetes clusters",
+  "mcpName": "io.github.mikhae1/kubeview",
   "main": "dist/src/index.js",
   "type": "module",
   "exports": {
@@ -43,12 +44,13 @@
   "keywords": [
     "kubernetes",
     "mcp",
-    "cursor",
     "debugging",
     "k8s",
-    "devtools"
+    "ai-tools",
+    "ai-agent",
+    "code-mode-mcp"
   ],
-  "author": "kubeview-mcp team",
+  "author": "mikhae1",
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"

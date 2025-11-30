@@ -1,0 +1,100 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "io.github.mikhae1/kubeview",
+  "description": "Read-only Model Context Protocol server that surfaces Kubernetes, Helm, and Argo insights safely.",
+  "repository": {
+    "url": "https://github.com/mikhae1/kubeview-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/mikhae1/kubeview-mcp",
+  "version": "1.4.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "kubeview-mcp",
+      "version": "1.4.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "KUBECONFIG",
+          "description": "Path to kubeconfig file; defaults to ~/.kube/config if unset.",
+          "format": "filepath",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_MODE",
+          "description": "Server mode: 'all' (default), 'code', or 'tools'. Controls which features are enabled.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_LOG_LEVEL",
+          "description": "Logging level: 'error', 'warn', 'info' (default), or 'debug'.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_KUBE_CONTEXT",
+          "description": "Kubernetes context name to use. If unset, uses the current context from kubeconfig.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_K8S_SKIP_TLS_VERIFY",
+          "description": "Skip TLS certificate verification for Kubernetes API (use 'true' or '1'). Not recommended for production.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_HIDE_SENSITIVE",
+          "description": "Enable global sensitive data masking. Set to 'true' or '1' to mask sensitive values in responses.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_TIMEOUT",
+          "description": "Default timeout in milliseconds for operations. If unset, uses plugin-specific defaults.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_DISABLE_KUBERNETES_PLUGIN",
+          "description": "Disable Kubernetes plugin. Set to 'true' or '1' to disable.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_DISABLE_HELM_PLUGIN",
+          "description": "Disable Helm plugin. Set to 'true' or '1' to disable.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_DISABLE_ARGO_PLUGIN",
+          "description": "Disable Argo Workflows plugin. Set to 'true' or '1' to disable.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_DISABLE_ARGOCD_PLUGIN",
+          "description": "Disable Argo CD plugin. Set to 'true' or '1' to disable.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

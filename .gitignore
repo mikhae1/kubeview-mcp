@@ -43,6 +43,7 @@ scripts/task*
 generated/
 workspace/
 kube-mcp.code-mode.json
+.mcpregistry*
 
 # Generated version file
 src/version.ts
