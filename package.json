@@ -1,6 +1,6 @@
 {
   "name": "kubeview-mcp",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "Read-only MCP server enabling code-driven AI analysis of Kubernetes clusters",
   "mcpName": "io.github.mikhae1/kubeview",
   "main": "dist/src/index.js",
@@ -40,9 +40,10 @@
     "release": "npm run release:version && npm run release:qa && npm run release:build",
     "publish:commit": "git commit -m 'Release v$(node -p \"require('./package.json').version\")'",
     "publish:tag": "git tag v$(node -p \"require('./package.json').version\") && echo 'Tagged version v'$(node -p \"require('./package.json').version\")",
-    "publish:push": "npm publish && git push origin master --tags",
+    "publish:npm": "npm publish",
+    "publish:git": "git push origin master --tags",
     "publish:mcp": "mcp-publisher login github && mcp-publisher publish server.json",
-    "publish": "npm run release && npm run publish:commit && npm run publish:tag && npm run publish:push && publish:mcp"
+    "publish": "npm run publish:commit && npm run publish:tag && npm run publish:npm && npm run publish:git && npm run publish:mcp"
   },
   "keywords": [
     "kubernetes",

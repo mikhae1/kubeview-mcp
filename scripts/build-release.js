@@ -69,11 +69,24 @@ function categorizeCommit(commit) {
   return 'Changed';
 }
 
-function formatCommitMessage(subject) {
+function replaceVersionTokens(message, version) {
+  // Normalize common version placeholders that may appear in commit messages
+  const patterns = [
+    /\$\(\s*node\s+-p\s+["']?require\([^)]*package\.json[^)]*\)\.version["']?\s*\)/gi,
+    /\$\{?npm_package_version\}?/gi,
+    /%npm_package_version%/gi
+  ];
+
+  return patterns.reduce((text, regex) => text.replace(regex, version), message);
+}
+
+function formatCommitMessage(subject, version) {
   // Remove common prefixes
-  return subject
+  const cleaned = subject
     .replace(/^(feat|fix|chore|refactor|add|change|remove|security|docs|style|test|perf|ci|build|revert):\s*/i, '')
     .trim();
+
+  return replaceVersionTokens(cleaned, version);
 }
 
 function generateChangelogEntry(version, date, commits) {
@@ -91,7 +104,7 @@ function generateChangelogEntry(version, date, commits) {
 
   commits.forEach(commit => {
     const category = categorizeCommit(commit);
-    const message = formatCommitMessage(commit.subject);
+    const message = formatCommitMessage(commit.subject, version);
     if (message) {
       categorized[category].push(`- **${message}**`);
     }
