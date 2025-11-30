@@ -28,10 +28,12 @@
 
 ### Installation
 
-Run directly with `npx`:
-
 ```bash
+# start the server
 npx -y kubeview-mcp
+
+# install as a claude code mcp server
+claude mcp add kubernetes -- npx kubeview-mcp
 ```
 
 ### Configuration for MCP Clients
@@ -83,8 +85,6 @@ Configure the server using environment variables:
 
 ### Utilities
 - **`run_code`**: Execute sandboxed TypeScript code for complex tasks.
-
-> **Note**: For detailed parameter usage, the AI agent can query the tool definitions directly.
 
 ---
 

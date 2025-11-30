@@ -37,7 +37,8 @@
     "release:check": "git diff --exit-code && git diff --cached --exit-code || (echo 'Error: Working directory not clean. Please commit or stash changes.' && exit 1)",
     "release:qa": "npm run lint && npm run typecheck && npm run test",
     "release:build": "npm run build",
-    "release:tag": "git tag v$(node -p \"require('./package.json').version\") && echo 'Tagged version v'$(node -p \"require('./package.json').version\")"
+    "release:tag": "git tag v$(node -p \"require('./package.json').version\") && echo 'Tagged version v'$(node -p \"require('./package.json').version\")",
+    "publish": "npm publish && git push origin master --tags"
   },
   "keywords": [
     "kubernetes",

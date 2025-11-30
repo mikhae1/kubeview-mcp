@@ -18,7 +18,8 @@ import { ArgoToolsPlugin } from './plugins/ArgoToolsPlugin.js';
 import { ArgoCDToolsPlugin } from './plugins/ArgoCDToolsPlugin.js';
 import { RunCodeTool } from './tools/RunCodeTool.js';
 
-export { VERSION } from './version.js';
+import { VERSION } from './version.js';
+export { VERSION };
 
 import { loadCodeModeConfig } from './utils/CodeModeConfig.js';
 
@@ -188,7 +189,7 @@ function getMCPMode(): MCPMode {
 }
 
 export async function main(): Promise<void> {
-  console.error(`Kubernetes MCP Server - Starting...`);
+  console.error(`Kubernetes MCP Server v${VERSION} - Starting...`);
 
   try {
     const server = new MCPServer();
