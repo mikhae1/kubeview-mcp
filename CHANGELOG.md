@@ -10,9 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.5] - 2025-11-30
 
 ### Changed
-- **Enhance publishing scripts in package.json for improved version management**
-- **Update server.json description for clarity**
-- **Update version to 1.4.4 in server.json and add changelog entry for automated version management**
+- Version bump to 1.4.5
 
 
 ## [1.4.4] - 2025-11-30
