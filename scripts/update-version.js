@@ -4,7 +4,6 @@
  */
 
 import { readFileSync, writeFileSync } from 'fs';
-import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createInterface } from 'readline';
@@ -50,17 +49,6 @@ async function main() {
   }
   writeFileSync(serverJsonPath, JSON.stringify(serverJson, null, 2) + '\n');
   console.log(`Updated server.json version to ${version}`);
-
-  try {
-    execSync('git add package.json server.json CHANGELOG.md', {
-      cwd: rootDir,
-      stdio: 'inherit'
-    });
-    console.log('Staged package.json, server.json, and CHANGELOG.md for release');
-  } catch (error) {
-    console.error('Warning: Failed to stage files:', error.message);
-    process.exit(1);
-  }
 
   rl.close();
 }

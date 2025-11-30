@@ -1,6 +1,6 @@
 {
   "name": "kubeview-mcp",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Read-only MCP server enabling code-driven AI analysis of Kubernetes clusters",
   "mcpName": "io.github.mikhae1/kubeview",
   "main": "dist/src/index.js",
@@ -34,15 +34,15 @@
     "typecheck": "tsc --noEmit",
     "prepare": "husky",
     "command": "node src/cli/run-command.js",
-    "release:check": "git diff --exit-code -- package.json server.json CHANGELOG.md && git diff --cached --exit-code -- package.json server.json CHANGELOG.md || { echo 'Error: package.json, server.json, or CHANGELOG.md already have changes. Please commit or stash them before releasing.'; exit 1; }",
     "release:qa": "npm run lint && npm run typecheck && npm run test",
     "release:build": "npm run build",
     "release:version": "node scripts/update-version.js",
-    "release": "npm run release:check && npm run release:qa && npm run release:build && npm run publish:tag",
+    "release": "npm run release:version && npm run release:qa && npm run release:build",
     "publish:commit": "git commit -m 'Release v$(node -p \"require('./package.json').version\")'",
     "publish:tag": "git tag v$(node -p \"require('./package.json').version\") && echo 'Tagged version v'$(node -p \"require('./package.json').version\")",
     "publish:push": "npm publish && git push origin master --tags",
-    "publish": "npm run release && npm run publish:commit && npm run publish:tag && npm run publish:push"
+    "publish:mcp": "mcp-publisher login github && mcp-publisher publish server.json",
+    "publish": "npm run release && npm run publish:commit && npm run publish:tag && npm run publish:push && publish:mcp"
   },
   "keywords": [
     "kubernetes",

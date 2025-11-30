@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.5] - 2025-11-30
+
+### Changed
+- **Enhance publishing scripts in package.json for improved version management**
+- **Update server.json description for clarity**
+- **Update version to 1.4.4 in server.json and add changelog entry for automated version management**
+
+
 ## [1.4.4] - 2025-11-30
 
 ### Changed
 - **Update  build-release and update-version scripts for automated version management**
-
 
 ## [1.4.0] - 2025-11-29
 

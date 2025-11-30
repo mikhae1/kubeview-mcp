@@ -112,24 +112,39 @@ function generateChangelogEntry(version, date, commits) {
   return entry;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function removeExistingVersionEntries(changelog, version) {
+  const versionPattern = new RegExp(`\\n## \\[${escapeRegExp(version)}\\][\\s\\S]*?(?=\\n## \\[|$)`, 'g');
+  let updated = changelog.replace(versionPattern, '\n').replace(/\n{3,}/g, '\n\n');
+  // If entry was at the very top (no leading newline), ensure header removal
+  const leadingPattern = new RegExp(`^## \\[${escapeRegExp(version)}\\][\\s\\S]*?(?=\\n## \\[|$)`, 'g');
+  updated = updated.replace(leadingPattern, '').replace(/\n{3,}/g, '\n\n');
+  return updated;
+}
+
 function updateChangelog(version, date, commits) {
   const changelogPath = join(rootDir, 'CHANGELOG.md');
   const changelog = readFileSync(changelogPath, 'utf8');
 
+  const sanitizedChangelog = removeExistingVersionEntries(changelog, version);
+
   const newEntry = generateChangelogEntry(version, date, commits);
 
   // Insert after ## [Unreleased] section
-  const unreleasedIndex = changelog.indexOf('## [Unreleased]');
+  const unreleasedIndex = sanitizedChangelog.indexOf('## [Unreleased]');
   if (unreleasedIndex === -1) {
     throw new Error('Could not find [Unreleased] section in CHANGELOG.md');
   }
 
-  const nextSectionIndex = changelog.indexOf('\n## [', unreleasedIndex + 1);
+  const nextSectionIndex = sanitizedChangelog.indexOf('\n## [', unreleasedIndex + 1);
   const insertIndex = nextSectionIndex === -1
-    ? changelog.indexOf('\n', unreleasedIndex) + 1
+    ? sanitizedChangelog.indexOf('\n', unreleasedIndex) + 1
     : nextSectionIndex;
 
-  const updatedChangelog = changelog.slice(0, insertIndex) + '\n' + newEntry + changelog.slice(insertIndex);
+  const updatedChangelog = sanitizedChangelog.slice(0, insertIndex) + '\n' + newEntry + sanitizedChangelog.slice(insertIndex);
   writeFileSync(changelogPath, updatedChangelog);
   console.error(`Updated CHANGELOG.md with version ${version}`);
 }
