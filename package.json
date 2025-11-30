@@ -1,6 +1,6 @@
 {
   "name": "kubeview-mcp",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Read-only MCP server enabling code-driven AI analysis of Kubernetes clusters",
   "mcpName": "io.github.mikhae1/kubeview",
   "main": "dist/src/index.js",
@@ -22,7 +22,7 @@
     "*.md"
   ],
   "scripts": {
-    "build": "node scripts/build-version.js && tsc",
+    "build": "node scripts/build-release.js && tsc",
     "dev": "tsx --watch src/cli/cli.ts",
     "start": "tsc && node bin/kubeview-mcp.js",
     "setup": "node bin/setup.js",
@@ -34,12 +34,13 @@
     "typecheck": "tsc --noEmit",
     "prepare": "husky",
     "command": "node src/cli/run-command.js",
-    "release": "npm run release:check && npm run release:qa && npm run release:build && npm run release:tag",
-    "release:check": "git diff --exit-code && git diff --cached --exit-code || (echo 'Error: Working directory not clean. Please commit or stash changes.' && exit 1)",
+    "release": "npm run release:check && npm run release:qa && npm run release:build && npm run publish:tag",
+    "release:check": "git diff --exit-code -- package.json server.json CHANGELOG.md && git diff --cached --exit-code -- package.json server.json CHANGELOG.md || { echo 'Error: package.json, server.json, or CHANGELOG.md already have changes. Please commit or stash them before releasing.'; exit 1; }",
     "release:qa": "npm run lint && npm run typecheck && npm run test",
     "release:build": "npm run build",
-    "release:tag": "git tag v$(node -p \"require('./package.json').version\") && echo 'Tagged version v'$(node -p \"require('./package.json').version\")",
-    "publish": "npm publish && git push origin master --tags"
+    "release:version": "node scripts/update-version.js",
+    "publish:tag": "npm run release:version && git tag v$(node -p \"require('./package.json').version\") && echo 'Tagged version v'$(node -p \"require('./package.json').version\")",
+    "publish": "npm run publish:tag && npm publish && git push origin master --tags"
   },
   "keywords": [
     "kubernetes",
