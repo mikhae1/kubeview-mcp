@@ -39,9 +39,10 @@
     "release:build": "npm run build",
     "release:version": "node scripts/update-version.js",
     "release": "npm run release:check && npm run release:qa && npm run release:build && npm run publish:tag",
+    "publish:commit": "git commit -m 'Release v$(node -p \"require('./package.json').version\")'",
     "publish:tag": "git tag v$(node -p \"require('./package.json').version\") && echo 'Tagged version v'$(node -p \"require('./package.json').version\")",
-    "publish:all": "npm publish && git push origin master --tags",
-    "publish": "npm run release:version && npm run publish:tag && npm run publish:all"
+    "publish:push": "npm publish && git push origin master --tags",
+    "publish": "npm run release && npm run publish:commit && npm run publish:tag && npm run publish:push"
   },
   "keywords": [
     "kubernetes",
