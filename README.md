@@ -4,17 +4,18 @@
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8+-blue)](https://www.typescriptlang.org/)
 
-**KubeView** is a read-only Model Context Protocol (MCP) server that enables AI agents (like Cursor, Claude Desktop) to inspect, diagnose, and debug Kubernetes clusters safely. It provides a comprehensive set of tools for Kubernetes, Helm, Argo Workflows, and Argo CD.
+**KubeView** is a read-only Model Context Protocol (MCP) server that enables AI agents (like Cursor IDE, Claude Code CLI, Codex CLI, Gemini CLI, etc.) to inspect, diagnose, and debug Kubernetes clusters safely. It provides a comprehensive set of tools for Kubernetes, Helm, Argo Workflows, and Argo CD.
+Learn more about the benefits of code mode and implementation in [Evicting MCP tool calls from your Kubernetes cluster](https://dev.to/mikhae1/evicting-mcp-tool-calls-from-your-kubernetes-cluster-428k).
 
 ---
 
 ## ✨ Features
 
+- **🧠 Code Mode**: Sandboxed TypeScript environment for complex reasoning and multi-step workflows.
 - **🛡️ Read-Only & Safe**: Designed for production safety with zero write access and sensitive data masking.
-- **☸️ Kubernetes Integration**: List/get resources, fetch metrics, stream logs, execute commands, and diagnose network issues.
+- **☸️ Kubernetes Integration**: List/get resources, fetch metrics, stream logs and events, execute commands, and tools to diagnose network issues.
 - **📦 Helm Support**: Inspect releases, values, manifests, and history.
 - **🐙 Argo Ecosystem**: Manage Argo Workflows and Argo CD applications.
-- **🧠 Code Mode**: Sandboxed TypeScript environment for complex reasoning and multi-step workflows.
 
 ---
 
@@ -148,4 +149,4 @@ npm run command -- kube_list --namespace=default
 
 ## 📄 License
 
-MIT © [kubeview-mcp team](https://github.com/mikhae1/kubeview-mcp)
+MIT © [mikhae1](https://github.com/mikhae1/kubeview-mcp)
