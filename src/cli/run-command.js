@@ -300,6 +300,31 @@ function extractCommandDescriptions() {
 
 const COMMAND_DESCRIPTIONS = extractCommandDescriptions();
 
+const COMMAND_ALIASES = {
+  argocd_app_list: { target: 'argocd_app', type: 'argocd', inject: { operation: 'list' } },
+  argocd_app_get: { target: 'argocd_app', type: 'argocd', inject: { operation: 'get' } },
+  argocd_app_resources: {
+    target: 'argocd_app',
+    type: 'argocd',
+    inject: { operation: 'resources' },
+  },
+  argocd_app_history: { target: 'argocd_app', type: 'argocd', inject: { operation: 'history' } },
+  argocd_app_status: { target: 'argocd_app', type: 'argocd', inject: { operation: 'status' } },
+};
+
+for (const [alias, cfg] of Object.entries(COMMAND_ALIASES)) {
+  if (COMMAND_DESCRIPTIONS[alias]) continue;
+  const base = COMMAND_DESCRIPTIONS[cfg.target];
+  if (!base) continue;
+  const params = { ...(base.params || {}) };
+  delete params.operation;
+  COMMAND_DESCRIPTIONS[alias] = {
+    description: base.description,
+    params,
+    type: cfg.type,
+  };
+}
+
 // Show help for a specific command
 function showCommandHelp(commandName) {
   const commandInfo = COMMAND_DESCRIPTIONS[commandName];
@@ -322,11 +347,26 @@ function showCommandHelp(commandName) {
   }
 
   console.log('\nExample:');
-  console.log(`  npm run command -- ${commandName} ${generateExampleParams(commandInfo.params)}`);
+  console.log(
+    `  npm run command -- ${commandName} ${generateExampleParams(commandName, commandInfo.params)}`,
+  );
 }
 
 // Generate example parameters for a command
-function generateExampleParams(params) {
+function generateExampleParams(commandName, params) {
+  const overrides = {
+    argocd_app_list: ['--selector=app=myapp'],
+    argocd_app_get: ['--appName=my-app'],
+    argocd_app_resources: ['--appName=my-app'],
+    argocd_app_logs: ['--appName=my-app', '--container=main'],
+    argocd_app_history: ['--appName=my-app'],
+    argocd_app_status: ['--appName=my-app'],
+  };
+
+  if (overrides[commandName]) {
+    return overrides[commandName].join(' ');
+  }
+
   const examples = [];
   for (const param of Object.keys(params)) {
     if (param === 'random_string') continue;
@@ -348,6 +388,17 @@ function generateExampleParams(params) {
 
   // Only include a few examples to keep it readable
   return examples.slice(0, 2).join(' ');
+}
+
+function pickExampleCommand(type, preferred) {
+  for (const name of preferred) {
+    const info = COMMAND_DESCRIPTIONS[name];
+    if (info && info.type === type) return name;
+  }
+  for (const [name, info] of Object.entries(COMMAND_DESCRIPTIONS)) {
+    if (info.type === type) return name;
+  }
+  return null;
 }
 
 // Show general help
@@ -403,26 +454,41 @@ function showGeneralHelp() {
   console.log('\nFor command-specific help:');
   console.log('  npm run command help <command_name>');
   console.log('\nExamples:');
-  console.log('  # Code execution');
-  console.log(
-    '  npm run command -- run_code --code="console.log(await tools.kubernetes.list({}));"',
-  );
-  console.log('  # Kubernetes');
-  console.log('  npm run command -- get_pods');
-  console.log('  npm run command -- get_metrics --namespace=kube-system');
-  console.log('  npm run command -- pod_logs --podName=nginx-pod --namespace=default --tailLines=100');
-  console.log('  # Helm');
-  console.log('  npm run command -- helm_list');
-  console.log('  npm run command -- helm_get --what=status --releaseName=my-release --namespace=default');
-  console.log('  npm run command -- helm_get --what=values --releaseName=my-release --namespace=default');
-  console.log('  # Argo');
-  console.log('  npm run command -- argo_list');
-  console.log('  npm run command -- argo_logs --workflowName=my-workflow --namespace=argo');
-  console.log('  npm run command -- argo_cron_list');
-  console.log('  # ArgoCD');
-  console.log('  npm run command -- argocd_app_list');
-  console.log('  npm run command -- argocd_app_get --appName=my-app');
-  console.log('  npm run command -- argocd_app_logs --appName=my-app --container=main');
+
+  const codeCmd = pickExampleCommand('run_code', ['run_code']);
+  const kubeCmd = pickExampleCommand('kubernetes', ['kube_list', 'kube_metrics', 'kube_get', 'kube_logs']);
+  const helmCmd = pickExampleCommand('helm', ['helm_list', 'helm_get']);
+  const argoCmd = pickExampleCommand('argo', ['argo_list', 'argo_get', 'argo_logs']);
+  const argoCdCmd = pickExampleCommand('argocd', ['argocd_app_list', 'argocd_app_get', 'argocd_app']);
+
+  if (codeCmd) {
+    console.log('  # Code execution');
+    console.log(
+      '  npm run command -- run_code --code="console.log(await tools.kubernetes.list({}));"',
+    );
+  }
+
+  if (kubeCmd) {
+    console.log('  # Kubernetes');
+    console.log(`  npm run command -- ${kubeCmd} ${generateExampleParams(kubeCmd, COMMAND_DESCRIPTIONS[kubeCmd].params)}`);
+  }
+
+  if (helmCmd) {
+    console.log('  # Helm');
+    console.log(`  npm run command -- ${helmCmd} ${generateExampleParams(helmCmd, COMMAND_DESCRIPTIONS[helmCmd].params)}`);
+  }
+
+  if (argoCmd) {
+    console.log('  # Argo');
+    console.log(`  npm run command -- ${argoCmd} ${generateExampleParams(argoCmd, COMMAND_DESCRIPTIONS[argoCmd].params)}`);
+  }
+
+  if (argoCdCmd) {
+    console.log('  # ArgoCD');
+    console.log(
+      `  npm run command -- ${argoCdCmd} ${generateExampleParams(argoCdCmd, COMMAND_DESCRIPTIONS[argoCdCmd].params)}`,
+    );
+  }
 }
 
 // Parse parameters from command line arguments
@@ -487,6 +553,14 @@ async function main() {
   // Parse parameters from command line
   const params = parseParams();
 
+  const aliasCfg = COMMAND_ALIASES[commandName];
+  const resolvedCommandName = aliasCfg?.target || commandName;
+  if (aliasCfg?.inject && params && typeof params === 'object') {
+    for (const [k, v] of Object.entries(aliasCfg.inject)) {
+      if (params[k] === undefined) params[k] = v;
+    }
+  }
+
   // Display command info
   console.log(`Executing command: ${commandName}`);
   if (Object.keys(params).length > 0) {
@@ -507,19 +581,24 @@ async function main() {
     } else if (commandInfo.type === 'helm') {
       // Use HelmToolsPlugin for Helm commands
       console.log('\nExecuting Helm CLI command...');
-      result = await HelmToolsPlugin.executeCommand(commandName, params);
+      result = await HelmToolsPlugin.executeCommand(resolvedCommandName, params);
     } else if (commandInfo.type === 'argo') {
       // Use ArgoToolsPlugin for Argo commands
       console.log('\nExecuting Argo CLI command...');
-      result = await ArgoToolsPlugin.executeCommand(commandName, params);
+      result = await ArgoToolsPlugin.executeCommand(resolvedCommandName, params);
     } else if (commandInfo.type === 'argocd') {
       // Use ArgoCDToolsPlugin for ArgoCD commands
-      console.log('\nExecuting ArgoCD CLI command...');
-      result = await ArgoCDToolsPlugin.executeCommand(commandName, params);
+      result = await ArgoCDToolsPlugin.executeCommand(resolvedCommandName, params);
+      const transport = result && typeof result === 'object' ? result.__transport : undefined;
+      if (transport === 'k8s') {
+        console.log('\nExecuting ArgoCD API call...');
+      } else {
+        console.log('\nExecuting ArgoCD CLI command...');
+      }
     } else {
       // Use KubernetesToolsPlugin for Kubernetes commands
       console.log('\nConnecting to Kubernetes cluster...');
-      result = await KubernetesToolsPlugin.executeCommand(commandName, params);
+      result = await KubernetesToolsPlugin.executeCommand(resolvedCommandName, params);
     }
 
     // Output the result

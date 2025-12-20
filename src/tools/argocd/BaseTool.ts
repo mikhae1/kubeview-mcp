@@ -25,6 +25,11 @@ export const ArgoCDCommonSchemas = {
     description: 'Kubernetes namespace (defaults to argocd namespace if not specified)',
     optional: true,
   },
+  labelSelector: {
+    type: 'string',
+    description: 'Label selector to filter resources (e.g., "app=myapp")',
+    optional: true,
+  },
   appName: {
     type: 'string',
     description: 'Name of the ArgoCD application',

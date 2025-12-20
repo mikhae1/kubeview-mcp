@@ -36,6 +36,11 @@ export interface PodOperationOptions extends ResourceOperationOptions {
    * Timestamps in log output
    */
   timestamps?: boolean;
+
+  /**
+   * Return logs since a specific time (in seconds)
+   */
+  sinceSeconds?: number;
 }
 
 /**
@@ -206,6 +211,7 @@ export class PodOperations extends BaseResourceOperations<V1Pod> {
         tailLines: options?.tailLines,
         previous: options?.previous,
         timestamps: options?.timestamps,
+        sinceSeconds: options?.sinceSeconds,
       });
       return response as unknown as string;
     } catch (error) {
@@ -234,6 +240,7 @@ export class PodOperations extends BaseResourceOperations<V1Pod> {
           tailLines: options?.tailLines,
           previous: options?.previous,
           timestamps: options?.timestamps,
+          sinceSeconds: options?.sinceSeconds,
         });
 
         const pollLogs = async () => {

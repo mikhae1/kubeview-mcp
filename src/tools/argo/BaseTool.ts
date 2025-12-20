@@ -25,6 +25,11 @@ export const ArgoCommonSchemas = {
     description: 'Kubernetes namespace (defaults to argo namespace if not specified)',
     optional: true,
   },
+  labelSelector: {
+    type: 'string',
+    description: 'Label selector to filter resources (e.g., "app=myapp")',
+    optional: true,
+  },
   workflowName: {
     type: 'string',
     description: 'Name of the Argo workflow',

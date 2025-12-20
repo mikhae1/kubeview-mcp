@@ -1,5 +1,124 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { ArgoBaseTool, ArgoCommonSchemas, executeArgoCommand } from './BaseTool.js';
+import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
+import {
+  ArgoBaseTool,
+  ArgoCommonSchemas,
+  executeArgoCommand,
+  validateArgoCLI,
+} from './BaseTool.js';
+
+function buildKubernetesClientFromEnv(): KubernetesClient {
+  const context = process.env.MCP_KUBE_CONTEXT;
+  const skipTlsEnv = process.env.MCP_K8S_SKIP_TLS_VERIFY;
+  const skipTlsVerify = skipTlsEnv === 'true' || skipTlsEnv === '1';
+
+  return new KubernetesClient({
+    context: context && context.trim().length > 0 ? context.trim() : undefined,
+    skipTlsVerify,
+  });
+}
+
+function parseDurationToMs(input: string): number | null {
+  const m = String(input)
+    .trim()
+    .match(/^(-?\d+(?:\.\d+)?)(ms|s|m|h|d)$/i);
+  if (!m) return null;
+  const value = Number(m[1]);
+  const unit = m[2].toLowerCase();
+  if (!Number.isFinite(value)) return null;
+  switch (unit) {
+    case 'ms':
+      return value;
+    case 's':
+      return value * 1000;
+    case 'm':
+      return value * 60_000;
+    case 'h':
+      return value * 3_600_000;
+    case 'd':
+      return value * 86_400_000;
+    default:
+      return null;
+  }
+}
+
+function isRecoverableK8sError(error: any): boolean {
+  const statusCode = error?.statusCode ?? error?.response?.statusCode;
+  if (statusCode === 404 || statusCode === 403 || statusCode === 401) return true;
+  const code = error?.body?.code;
+  if (code === 404 || code === 403 || code === 401) return true;
+  const reason = error?.body?.reason;
+  if (reason === 'NotFound' || reason === 'Forbidden' || reason === 'Unauthorized') return true;
+  return false;
+}
+
+async function listWorkflowsViaK8s(params: any): Promise<any> {
+  const client = buildKubernetesClientFromEnv();
+  await client.refreshCurrentContext();
+
+  const group = 'argoproj.io';
+  const version = 'v1alpha1';
+  const plural = 'workflows';
+  const labelSelector = params?.labelSelector || params?.selector;
+
+  const allNamespaces = Boolean(params?.allNamespaces);
+  const namespace = params?.namespace || 'argo';
+
+  const resp = allNamespaces
+    ? ((await client.customObjects.listClusterCustomObject({
+        group,
+        version,
+        plural,
+        labelSelector,
+      })) as any)
+    : ((await client.customObjects.listNamespacedCustomObject({
+        group,
+        version,
+        namespace,
+        plural,
+        labelSelector,
+      })) as any);
+
+  const body = (resp?.body ?? resp) as any;
+  const items = Array.isArray(body?.items) ? body.items : [];
+  let filtered = items;
+
+  const status = params?.status;
+  const phasesFromFlags: string[] = [];
+  if (params?.running) phasesFromFlags.push('Running');
+  if (params?.succeeded) phasesFromFlags.push('Succeeded');
+  if (params?.pending) phasesFromFlags.push('Pending');
+  if (params?.failed) phasesFromFlags.push('Failed', 'Error');
+
+  if (typeof status === 'string' && status.length > 0) {
+    filtered = filtered.filter((w: any) => String(w?.status?.phase || '') === status);
+  } else if (phasesFromFlags.length > 0) {
+    const allowed = new Set(phasesFromFlags);
+    filtered = filtered.filter((w: any) => allowed.has(String(w?.status?.phase || '')));
+  }
+
+  if (params?.completed) {
+    filtered = filtered.filter((w: any) => Boolean(w?.status?.finishedAt));
+  }
+
+  if (params?.since) {
+    const ms = parseDurationToMs(params.since);
+    if (ms) {
+      const cutoff = Date.now() - ms;
+      filtered = filtered.filter((w: any) => {
+        const ts = w?.status?.startedAt || w?.metadata?.creationTimestamp;
+        const t = ts ? Date.parse(ts) : NaN;
+        return Number.isFinite(t) && t >= cutoff;
+      });
+    }
+  }
+
+  if (typeof params?.maxWorkflows === 'number' && Number.isFinite(params.maxWorkflows)) {
+    filtered = filtered.slice(0, Math.max(0, params.maxWorkflows));
+  }
+
+  return { ...body, items: filtered };
+}
 
 /**
  * List Argo workflows
@@ -21,6 +140,7 @@ export class ArgoListTool implements ArgoBaseTool {
           optional: true,
           default: 'json',
         },
+        labelSelector: ArgoCommonSchemas.labelSelector,
         selector: ArgoCommonSchemas.selector,
         maxWorkflows: {
           type: 'number',
@@ -74,7 +194,24 @@ export class ArgoListTool implements ArgoBaseTool {
   };
 
   async execute(params: any): Promise<any> {
+    const outputFormat = params?.outputFormat || 'json';
+    if (outputFormat === 'json') {
+      try {
+        return await listWorkflowsViaK8s(params);
+      } catch (error: any) {
+        if (!isRecoverableK8sError(error)) {
+          throw new Error(
+            `Failed to list Argo workflows via Kubernetes API: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    }
+
     const args = ['list'];
+
+    const labelSelector = params?.labelSelector || params?.selector;
 
     // Add namespace specification
     if (params.allNamespaces) {
@@ -84,15 +221,15 @@ export class ArgoListTool implements ArgoBaseTool {
     }
 
     // Add output format
-    if (params.outputFormat) {
-      args.push('-o', params.outputFormat);
+    if (outputFormat) {
+      args.push('-o', outputFormat);
     } else {
       args.push('-o', 'json');
     }
 
     // Add selector
-    if (params.selector) {
-      args.push('-l', params.selector);
+    if (labelSelector) {
+      args.push('-l', labelSelector);
     }
 
     // Add status filters
@@ -133,6 +270,7 @@ export class ArgoListTool implements ArgoBaseTool {
     }
 
     try {
+      await validateArgoCLI();
       const result = await executeArgoCommand(args);
       return result;
     } catch (error) {

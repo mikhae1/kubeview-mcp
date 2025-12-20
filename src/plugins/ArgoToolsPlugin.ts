@@ -1,12 +1,6 @@
 import { MCPServer } from '../server/MCPServer.js';
 import winston from 'winston';
-import {
-  type ArgoBaseTool,
-  validateArgoCLI,
-  ArgoListTool,
-  ArgoLogsTool,
-  ArgoGetTool,
-} from '../tools/argo/index.js';
+import { type ArgoBaseTool, ArgoListTool, ArgoLogsTool, ArgoGetTool } from '../tools/argo/index.js';
 import { BaseToolsPlugin } from './BaseToolsPlugin.js';
 
 /**
@@ -46,7 +40,7 @@ export class ArgoToolsPlugin extends BaseToolsPlugin<ArgoBaseTool> {
   }
 
   protected async validate(): Promise<void> {
-    await validateArgoCLI();
+    return;
   }
 
   static async executeCommand(commandName: string, params: Record<string, unknown>): Promise<any> {
@@ -56,8 +50,6 @@ export class ArgoToolsPlugin extends BaseToolsPlugin<ArgoBaseTool> {
     ) {
       throw new Error('Argo plugin is disabled');
     }
-
-    await validateArgoCLI();
 
     const plugin = new ArgoToolsPlugin();
     plugin.commands = plugin.createToolInstances();

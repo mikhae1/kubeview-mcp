@@ -1,5 +1,10 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { ArgoBaseTool, ArgoCommonSchemas, executeArgoCommand } from './BaseTool.js';
+import {
+  ArgoBaseTool,
+  ArgoCommonSchemas,
+  executeArgoCommand,
+  validateArgoCLI,
+} from './BaseTool.js';
 
 /**
  * Get logs from Argo workflows
@@ -46,6 +51,11 @@ export class ArgoLogsTool implements ArgoBaseTool {
           description: 'Number of lines to show from the end of the logs',
           optional: true,
         },
+        tailLines: {
+          type: 'number',
+          description: 'Alias for tail',
+          optional: true,
+        },
         timestamps: {
           type: 'boolean',
           description: 'Include timestamps in the log output',
@@ -68,6 +78,8 @@ export class ArgoLogsTool implements ArgoBaseTool {
 
   async execute(params: any): Promise<any> {
     const args = ['logs', params.workflowName];
+
+    const tailLines = params?.tailLines ?? params?.tail;
 
     // Add namespace
     if (params.namespace) {
@@ -100,8 +112,8 @@ export class ArgoLogsTool implements ArgoBaseTool {
     }
 
     // Add tail lines
-    if (params.tail) {
-      args.push('--tail', params.tail.toString());
+    if (typeof tailLines === 'number') {
+      args.push('--tail', tailLines.toString());
     }
 
     // Add timestamps
@@ -120,8 +132,32 @@ export class ArgoLogsTool implements ArgoBaseTool {
     }
 
     try {
+      await validateArgoCLI();
       const result = await executeArgoCommand(args);
-      return result;
+      const text =
+        typeof result === 'object' && result !== null && 'output' in result
+          ? String((result as any).output || '')
+          : typeof result === 'string'
+            ? result
+            : JSON.stringify(result);
+      const logLines = text.split('\n').filter((line) => line.trim().length > 0);
+      return {
+        workflowName: params.workflowName,
+        namespace: params.namespace || 'argo',
+        container: params.container,
+        lineCount: logLines.length,
+        logs: logLines,
+        options: {
+          follow: Boolean(params.follow),
+          previous: Boolean(params.previous),
+          since: params.since,
+          sinceTime: params.sinceTime,
+          tailLines,
+          timestamps: Boolean(params.timestamps),
+          grep: params.grep,
+          noColor: Boolean(params.noColor),
+        },
+      };
     } catch (error) {
       throw new Error(
         `Failed to get Argo workflow logs: ${error instanceof Error ? error.message : String(error)}`,

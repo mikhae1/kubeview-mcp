@@ -20,6 +20,7 @@ export class ArgoCronListTool implements ArgoBaseTool {
           optional: true,
           default: 'wide',
         },
+        labelSelector: ArgoCommonSchemas.labelSelector,
         selector: ArgoCommonSchemas.selector,
         maxCronWorkflows: {
           type: 'number',
@@ -39,6 +40,8 @@ export class ArgoCronListTool implements ArgoBaseTool {
   async execute(params: any): Promise<any> {
     const args = ['cron', 'list'];
 
+    const labelSelector = params?.labelSelector || params?.selector;
+
     // Add namespace specification
     if (params.allNamespaces) {
       args.push('--all-namespaces');
@@ -52,8 +55,8 @@ export class ArgoCronListTool implements ArgoBaseTool {
     }
 
     // Add selector
-    if (params.selector) {
-      args.push('-l', params.selector);
+    if (labelSelector) {
+      args.push('-l', labelSelector);
     }
 
     // Add max cron workflows limit

@@ -28,6 +28,8 @@ export default [
         clearInterval: 'readonly',
         require: 'readonly',
         NodeJS: 'readonly',
+        fetch: 'readonly',
+        URLSearchParams: 'readonly',
       },
     },
     plugins: {
@@ -56,6 +58,7 @@ export default [
         jest: 'readonly',
         test: 'readonly',
         setImmediate: 'readonly',
+        global: 'readonly',
       },
     },
   },
