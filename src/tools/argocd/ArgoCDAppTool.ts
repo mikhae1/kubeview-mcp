@@ -1,5 +1,7 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import * as https from 'https';
 import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
+import { PodOperations } from '../../kubernetes/resources/PodOperations.js';
 import {
   ArgoCDBaseTool,
   ArgoCDCommonSchemas,
@@ -33,7 +35,7 @@ function defaultArgoCDNamespace(): string {
   return ns && ns.trim().length > 0 ? ns.trim() : 'argocd';
 }
 
-function markTransport<T>(value: T, transport: 'k8s' | 'cli'): T {
+function markTransport<T>(value: T, transport: 'k8s' | 'cli' | 'api'): T {
   if (value && typeof value === 'object') {
     Object.defineProperty(value as any, '__transport', {
       value: transport,
@@ -149,28 +151,6 @@ async function getApplicationViaK8s(appName: string): Promise<any> {
   return (resp?.body ?? resp) as any;
 }
 
-async function getApplicationAndClientViaK8s(
-  appName: string,
-): Promise<{ app: any; client: KubernetesClient }> {
-  const client = buildKubernetesClientFromEnv();
-  await client.refreshCurrentContext();
-
-  const group = 'argoproj.io';
-  const version = 'v1alpha1';
-  const plural = 'applications';
-  const namespace = defaultArgoCDNamespace();
-
-  const resp = (await client.customObjects.getNamespacedCustomObject({
-    group,
-    version,
-    namespace,
-    plural,
-    name: appName,
-  })) as any;
-
-  return { app: (resp?.body ?? resp) as any, client };
-}
-
 function filterApplicationResources(resources: any[], params: any): any[] {
   let filtered = Array.isArray(resources) ? resources : [];
 
@@ -200,168 +180,179 @@ function filterApplicationResources(resources: any[], params: any): any[] {
   return filtered;
 }
 
-async function listAppPodsViaK8s(client: KubernetesClient, app: any, params: any): Promise<any[]> {
-  const namespaceFromParams = params?.namespace;
-  const namespaceFromSpec = app?.spec?.destination?.namespace;
-  const namespace = namespaceFromParams || namespaceFromSpec;
+async function fetchLogsViaK8s(params: any): Promise<string> {
+  const client = buildKubernetesClientFromEnv();
+  await client.refreshCurrentContext();
+  const podOps = new PodOperations(client);
 
-  const kind = params?.kind;
-  if (kind && String(kind).toLowerCase() !== 'pod') {
-    return [];
-  }
+  const namespace = params.namespace;
+  const appName = params.appName;
 
-  const name = params?.name;
-  if (name) {
+  let pods: any[] = [];
+
+  // 1. If specific pod name provided
+  if (params.name && (!params.kind || params.kind === 'Pod')) {
     if (namespace) {
-      const podResp = (await client.core.readNamespacedPod({ name, namespace })) as any;
-      return podResp ? [podResp] : [];
-    }
-
-    const all = (await client.core.listPodForAllNamespaces({})) as any;
-    const pods = Array.isArray(all?.items) ? all.items : [];
-    return pods.filter((p: any) => String(p?.metadata?.name || '') === String(name));
-  }
-
-  const appName = String(app?.metadata?.name || '');
-  const labelKeys: string[] = [];
-
-  try {
-    const cmResp = (await client.core.readNamespacedConfigMap({
-      name: 'argocd-cm',
-      namespace: defaultArgoCDNamespace(),
-    })) as any;
-    const cm = cmResp?.body ?? cmResp;
-    const configured = cm?.data?.['application.instanceLabelKey'];
-    if (configured && String(configured).trim().length > 0) {
-      labelKeys.push(String(configured).trim());
-    }
-  } catch {
-    // ignore
-  }
-
-  labelKeys.push('app.kubernetes.io/instance');
-  labelKeys.push('argocd.argoproj.io/instance');
-
-  const seen = new Set<string>();
-  const results: any[] = [];
-
-  for (const key of labelKeys) {
-    const labelSelector = `${key}=${appName}`;
-    const resp = namespace
-      ? ((await client.core.listNamespacedPod({ namespace, labelSelector })) as any)
-      : ((await client.core.listPodForAllNamespaces({ labelSelector })) as any);
-
-    const pods = Array.isArray(resp?.items) ? resp.items : [];
-    for (const p of pods) {
-      const ns = p?.metadata?.namespace;
-      const n = p?.metadata?.name;
-      if (!ns || !n) continue;
-      const k = `${ns}/${n}`;
-      if (seen.has(k)) continue;
-      seen.add(k);
-      results.push(p);
-    }
-  }
-
-  return results;
-}
-
-async function getAppLogsViaK8s(appName: string, params: any): Promise<any> {
-  const { app, client } = await getApplicationAndClientViaK8s(appName);
-
-  const requestedKind = params?.kind;
-  if (requestedKind && String(requestedKind).toLowerCase() !== 'pod') {
-    return { output: '' };
-  }
-
-  const namespaceFilter = params?.namespace;
-  const podsFromStatus = (Array.isArray(app?.status?.resources) ? app.status.resources : [])
-    .filter((r: any) => String(r?.kind || '') === 'Pod')
-    .filter((r: any) => !namespaceFilter || String(r?.namespace || '') === String(namespaceFilter))
-    .map((r: any) => ({ name: r?.name, namespace: r?.namespace }))
-    .filter((p: any) => Boolean(p?.name) && Boolean(p?.namespace));
-
-  const pods: any[] = [];
-  if (podsFromStatus.length > 0 && !params?.name) {
-    for (const p of podsFromStatus) {
       try {
-        const podResp = (await client.core.readNamespacedPod({
-          name: p.name,
-          namespace: p.namespace,
-        })) as any;
-        if (podResp) pods.push(podResp);
+        const pod = await podOps.get(params.name, { namespace });
+        if (pod) pods = [pod];
       } catch {
-        // ignore
+        // ignore not found
       }
+    } else {
+      const allPodsList = await podOps.list();
+      const found = allPodsList.items.find((p: any) => p.metadata?.name === params.name);
+      if (found) pods = [found];
     }
+  } else {
+    // 2. Search for pods matching the application
+    const labelSelector = `app.kubernetes.io/instance=${appName}`;
+    const listOptions = {
+      namespace,
+      labelSelector,
+    };
+
+    const res = await podOps.list(listOptions);
+    pods = res.items;
   }
 
   if (pods.length === 0) {
-    pods.push(...(await listAppPodsViaK8s(client, app, params)));
+    throw new Error(
+      `No pods found for application "${appName}" via Kubernetes API (label selector: app.kubernetes.io/instance=${appName})`,
+    );
   }
 
-  const {
-    container,
-    previous,
-    since,
-    sinceTime,
-    tail,
-    timestamps,
-  }: {
-    container?: string;
-    previous?: boolean;
-    since?: string;
-    sinceTime?: string;
-    tail?: number;
-    timestamps?: boolean;
-  } = params || {};
+  // Fetch logs
+  const logPromises = pods.map(async (pod: any) => {
+    const name = pod.metadata?.name;
+    const ns = pod.metadata?.namespace;
+    if (!name || !ns) return '';
 
-  const sinceSeconds = since ? parseDurationToSeconds(since) : undefined;
+    let sinceSeconds: number | undefined;
+    try {
+      if (params.since) {
+        sinceSeconds = parseDurationToSeconds(params.since);
+      }
+    } catch {
+      // ignore invalid duration
+    }
 
-  const podCount = pods.length;
-  const outLines: string[] = [];
+    try {
+      const logContent = await podOps.getLogs(name, {
+        namespace: ns,
+        container: params.container || undefined,
+        follow: params.follow || false,
+        tailLines: params.tail || params.tailLines,
+        sinceSeconds: sinceSeconds,
+        previous: params.previous,
+        timestamps: params.timestamps,
+      });
 
-  for (const pod of pods) {
-    const podName = pod?.metadata?.name;
-    const namespace = pod?.metadata?.namespace;
-    if (!podName || !namespace) continue;
+      if (pods.length > 1) {
+        return `Pod: ${name}\n${logContent}\n-------------------\n`;
+      }
+      return logContent;
+    } catch (error: any) {
+      const msg = error?.response?.body?.message || error.message || String(error);
+      return `Failed to fetch logs for pod ${name}: ${msg}\n`;
+    }
+  });
 
-    let effectiveContainer = container;
-    if (!effectiveContainer) {
-      const containers = Array.isArray(pod?.spec?.containers) ? pod.spec.containers : [];
-      if (containers.length === 1 && containers[0]?.name) {
-        effectiveContainer = String(containers[0].name);
+  const logs = await Promise.all(logPromises);
+  return logs.join('\n');
+}
+
+async function fetchLogsViaApi(params: any): Promise<string> {
+  const server = params.server || process.env.ARGOCD_SERVER;
+  const token = params.authToken || process.env.ARGOCD_AUTH_TOKEN;
+
+  if (!server || !token) {
+    throw new Error('Server and token are required for API access');
+  }
+
+  const protocol = params.insecure || params.plaintext ? 'http' : 'https';
+  const baseUrl = `${protocol}://${server}`;
+  const agent = new https.Agent({
+    rejectUnauthorized: !params.insecure,
+  });
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+  };
+
+  // Helper to fetch logs for a specific pod
+  const fetchPodLogs = async (podName: string, namespace: string): Promise<string> => {
+    const queryParams = new URLSearchParams();
+    if (params.container) queryParams.append('container', params.container);
+    if (params.tail || params.tailLines) {
+      queryParams.append('tailLines', String(params.tail || params.tailLines));
+    }
+    if (params.since) {
+      try {
+        const sinceSeconds = parseDurationToSeconds(params.since);
+        queryParams.append('sinceSeconds', String(sinceSeconds));
+      } catch {
+        // ignore invalid duration
       }
     }
+    if (params.sinceTime) queryParams.append('sinceTime', params.sinceTime);
+    if (params.previous) queryParams.append('previous', 'true');
+    if (params.timestamps) queryParams.append('timestamps', 'true');
+    if (namespace) queryParams.append('namespace', namespace);
 
-    const logResp = await client.core.readNamespacedPodLog({
-      name: podName,
-      namespace,
-      container: effectiveContainer,
-      previous,
-      timestamps,
-      tailLines: typeof tail === 'number' ? tail : undefined,
-      sinceSeconds,
-      sinceTime,
-      follow: false,
-    } as any);
+    const url = `${baseUrl}/api/v1/applications/${params.appName}/pods/${podName}/logs?${queryParams.toString()}`;
 
-    const raw = (logResp as unknown as string) || '';
-    const lines = raw.split('\n').filter((line) => line.length > 0);
-
-    const prefixBase = effectiveContainer || container || '';
-    const prefix =
-      prefixBase && podCount > 1
-        ? `${podName}/${prefixBase}: `
-        : podCount > 1
-          ? `${podName}: `
-          : '';
-    for (const line of lines) {
-      outLines.push(prefix ? `${prefix}${line}` : line);
+    try {
+      const response = await fetch(url, {
+        headers,
+        agent: params.insecure ? agent : undefined,
+      } as any);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`API Error ${response.status}: ${text}`);
+      }
+      return await response.text();
+    } catch (error) {
+      console.error(`Failed to fetch logs for pod ${podName}:`, error);
+      return `Error fetching logs for ${podName}: ${error instanceof Error ? error.message : String(error)}`;
     }
+  };
+
+  // If resource name is provided, try to fetch logs directly
+  if (params.name && (!params.kind || params.kind === 'Pod')) {
+    return await fetchPodLogs(params.name, params.namespace || '');
   }
 
-  return { output: outLines.join('\n') };
+  // Otherwise, we need to discover pods for the app
+  const treeUrl = `${baseUrl}/api/v1/applications/${params.appName}/resource-tree`;
+  const treeResponse = await fetch(treeUrl, {
+    headers,
+    agent: params.insecure ? agent : undefined,
+  } as any);
+
+  if (!treeResponse.ok) {
+    throw new Error(`Failed to fetch resource tree: ${treeResponse.statusText}`);
+  }
+
+  const treeData = (await treeResponse.json()) as any;
+  const nodes = treeData.nodes || [];
+
+  // Filter for Pods
+  const pods = nodes.filter(
+    (node: any) =>
+      node.kind === 'Pod' &&
+      (!params.group || node.group === params.group) &&
+      (!params.namespace || node.namespace === params.namespace),
+  );
+
+  if (pods.length === 0) {
+    return 'No pods found for application.';
+  }
+
+  // Fetch logs for all pods concurrently
+  const logs = await Promise.all(pods.map((pod: any) => fetchPodLogs(pod.name, pod.namespace)));
+
+  return logs.join('\n');
 }
 
 /**
@@ -377,11 +368,13 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
       properties: {
         operation: {
           type: 'string',
+          description: 'Operation to perform: list, get, resources, logs, history, or status',
           enum: ['list', 'get', 'resources', 'logs', 'history', 'status'],
         },
         appName: { ...ArgoCDCommonSchemas.appName, optional: true },
         outputFormat: {
           type: 'string',
+          description: 'Output format: json, yaml, wide, tree, or name',
           enum: ['json', 'yaml', 'wide', 'tree', 'name'],
           optional: true,
           default: 'json',
@@ -389,35 +382,83 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         // list filters
         labelSelector: ArgoCDCommonSchemas.labelSelector,
         selector: ArgoCDCommonSchemas.selector,
-        project: { type: 'string', optional: true },
-        cluster: { type: 'string', optional: true },
-        namespace: { type: 'string', optional: true },
-        repo: { type: 'string', optional: true },
+        project: { type: 'string', description: 'Filter by project name', optional: true },
+        cluster: { type: 'string', description: 'Filter by cluster name', optional: true },
+        namespace: { type: 'string', description: 'Filter by target namespace', optional: true },
+        repo: { type: 'string', description: 'Filter by repository URL', optional: true },
         health: {
           type: 'string',
+          description: 'Filter by health status',
           enum: ['Healthy', 'Progressing', 'Degraded', 'Suspended', 'Missing', 'Unknown'],
           optional: true,
         },
-        sync: { type: 'string', enum: ['Synced', 'OutOfSync', 'Unknown'], optional: true },
+        sync: {
+          type: 'string',
+          description: 'Filter by sync status',
+          enum: ['Synced', 'OutOfSync', 'Unknown'],
+          optional: true,
+        },
         // flags
         server: ArgoCDCommonSchemas.server,
         grpcWeb: ArgoCDCommonSchemas.grpcWeb,
         plaintext: ArgoCDCommonSchemas.plaintext,
         insecure: ArgoCDCommonSchemas.insecure,
-        refresh: { type: 'boolean', optional: true },
-        hardRefresh: { type: 'boolean', optional: true },
+        refresh: {
+          type: 'boolean',
+          description: 'Refresh application data when retrieving',
+          optional: true,
+        },
+        hardRefresh: {
+          type: 'boolean',
+          description: 'Refresh application data and ignore cache',
+          optional: true,
+        },
         // resources filters
-        group: { type: 'string', optional: true },
-        kind: { type: 'string', optional: true },
-        name: { type: 'string', optional: true },
+        group: { type: 'string', description: 'Filter by resource group', optional: true },
+        kind: {
+          type: 'string',
+          description: 'Filter by resource kind (e.g., Pod, Deployment)',
+          optional: true,
+        },
+        name: { type: 'string', description: 'Filter by resource name', optional: true },
         // logs options
-        container: { type: 'string', optional: true },
-        follow: { type: 'boolean', optional: true },
-        previous: { type: 'boolean', optional: true },
-        since: { type: 'string', optional: true },
-        sinceTime: { type: 'string', optional: true },
-        tail: { type: 'number', optional: true },
-        timestamps: { type: 'boolean', optional: true },
+        container: {
+          type: 'string',
+          description: 'Container name to get logs from',
+          optional: true,
+        },
+        follow: { type: 'boolean', description: 'Follow the logs stream', optional: true },
+        previous: {
+          type: 'boolean',
+          description: 'Get logs from previous container instance',
+          optional: true,
+        },
+        since: {
+          type: 'string',
+          description: 'Show logs newer than this duration (e.g., "1h", "30m")',
+          optional: true,
+        },
+        sinceTime: {
+          type: 'string',
+          description: 'Show logs after this timestamp (RFC3339)',
+          optional: true,
+        },
+        tail: {
+          type: 'number',
+          description: 'Number of lines to show from the end of the logs',
+          optional: true,
+        },
+        tailLines: { type: 'number', description: 'Alias for tail', optional: true },
+        timestamps: {
+          type: 'boolean',
+          description: 'Include timestamps in the log output',
+          optional: true,
+        },
+        authToken: {
+          type: 'string',
+          description: 'ArgoCD authentication token for API access',
+          optional: true,
+        },
       },
       required: ['operation'],
     },
@@ -450,6 +491,7 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
       since,
       sinceTime,
       tail,
+      tailLines,
       timestamps,
     } = params || {};
 
@@ -545,24 +587,76 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
       }
     }
 
-    const logsWouldNeedCli =
-      operation === 'logs' &&
-      (Boolean(follow) ||
-        Boolean(group) ||
-        (kind && String(kind).toLowerCase() !== 'pod') ||
-        (name && kind && String(kind).toLowerCase() !== 'pod'));
+    if (operation === 'logs' && appName) {
+      const tailLinesValue = tailLines ?? tail;
 
-    if (!logsWouldNeedCli && operation === 'logs' && appName && effectiveOutputFormat === 'json') {
+      // 1. Try Kubernetes API first (Direct access, no ArgoCD auth needed if we have kubeconfig)
       try {
-        return markTransport(await getAppLogsViaK8s(appName, params), 'k8s');
+        const text = await fetchLogsViaK8s({ ...params, tail: tailLinesValue });
+        const logLines = String(text)
+          .split('\n')
+          .map((l) => l.trimEnd())
+          .filter((l) => l.length > 0);
+        return markTransport(
+          {
+            appName,
+            namespace,
+            container,
+            lineCount: logLines.length,
+            logs: logLines,
+            options: {
+              follow: Boolean(follow),
+              previous: Boolean(previous),
+              since,
+              sinceTime,
+              tailLines: tailLinesValue,
+              timestamps: Boolean(timestamps),
+              group,
+              kind,
+              name,
+            },
+            transport: 'k8s',
+          },
+          'k8s',
+        );
       } catch (error: any) {
         if (!isRecoverableK8sError(error)) {
-          throw new Error(
-            `Failed to get ArgoCD application logs for ${appName} via Kubernetes API: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
+          // Ignore k8s error and fallback to ArgoCD API/CLI
+          console.error('ArgoCD API log fetch failed, falling back to CLI: ', error.message);
         }
+      }
+
+      // 2. Try ArgoCD API
+      try {
+        const text = await fetchLogsViaApi({ ...params, tail: tailLinesValue });
+        const logLines = String(text)
+          .split('\n')
+          .map((l) => l.trimEnd())
+          .filter((l) => l.length > 0);
+        return markTransport(
+          {
+            appName,
+            namespace,
+            container,
+            lineCount: logLines.length,
+            logs: logLines,
+            options: {
+              follow: Boolean(follow),
+              previous: Boolean(previous),
+              since,
+              sinceTime,
+              tailLines: tailLinesValue,
+              timestamps: Boolean(timestamps),
+              group,
+              kind,
+              name,
+            },
+            transport: 'api',
+          },
+          'api',
+        );
+      } catch {
+        // If API fails (including missing config), fall back to CLI
       }
     }
 
@@ -587,7 +681,12 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         if (sync) args.push('--sync', sync);
         addServerFlags(args);
         if (refresh) args.push('--refresh');
-        return markTransport(await executeArgoCDCommand(args), 'cli');
+        try {
+          return markTransport(await executeArgoCDCommand(args), 'cli');
+        } catch (error: any) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          throw new Error(`Failed to list ArgoCD applications: ${errorMessage}`);
+        }
       }
       case 'get': {
         if (!appName) throw new Error('appName is required for operation=get');
@@ -597,7 +696,12 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         if (refresh) args.push('--refresh');
         if (hardRefresh) args.push('--hard-refresh');
         addServerFlags(args);
-        return markTransport(await executeArgoCDCommand(args), 'cli');
+        try {
+          return markTransport(await executeArgoCDCommand(args), 'cli');
+        } catch (error: any) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          throw new Error(`Failed to get ArgoCD application "${appName}": ${errorMessage}`);
+        }
       }
       case 'resources': {
         if (!appName) throw new Error('appName is required for operation=resources');
@@ -611,7 +715,14 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         if (health) args.push('--health', health);
         if (sync) args.push('--sync', sync);
         addServerFlags(args);
-        return markTransport(await executeArgoCDCommand(args), 'cli');
+        try {
+          return markTransport(await executeArgoCDCommand(args), 'cli');
+        } catch (error: any) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Failed to get resources for ArgoCD application "${appName}": ${errorMessage}`,
+          );
+        }
       }
       case 'history': {
         if (!appName) throw new Error('appName is required for operation=history');
@@ -619,7 +730,14 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         const args = ['app', 'history', appName];
         if (outputFormat) args.push('-o', outputFormat);
         addServerFlags(args);
-        return markTransport(await executeArgoCDCommand(args), 'cli');
+        try {
+          return markTransport(await executeArgoCDCommand(args), 'cli');
+        } catch (error: any) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Failed to get history for ArgoCD application "${appName}": ${errorMessage}`,
+          );
+        }
       }
       case 'status': {
         if (!appName) throw new Error('appName is required for operation=status');
@@ -627,12 +745,20 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         const args = ['app', 'status', appName];
         if (outputFormat) args.push('-o', outputFormat);
         addServerFlags(args);
-        return markTransport(await executeArgoCDCommand(args), 'cli');
+        try {
+          return markTransport(await executeArgoCDCommand(args), 'cli');
+        } catch (error: any) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Failed to get status for ArgoCD application "${appName}": ${errorMessage}`,
+          );
+        }
       }
       case 'logs': {
         if (!appName) throw new Error('appName is required for operation=logs');
         await validateArgoCDCLI();
         const args = ['app', 'logs', appName];
+        const tailLinesValue = tailLines ?? tail;
         if (container) args.push('--container', container);
         if (follow) args.push('--follow');
         if (group) args.push('--group', group);
@@ -642,10 +768,60 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         if (previous) args.push('--previous');
         if (since) args.push('--since', since);
         if (sinceTime) args.push('--since-time', sinceTime);
-        if (typeof tail === 'number') args.push('--tail', String(tail));
+        if (typeof tailLinesValue === 'number') args.push('--tail', String(tailLinesValue));
         if (timestamps) args.push('--timestamps');
         addServerFlags(args);
-        return markTransport(await executeArgoCDCommand(args), 'cli');
+        let result: any;
+        try {
+          result = await executeArgoCDCommand(args);
+        } catch (error: any) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Failed to fetch logs for ArgoCD application "${appName}" via CLI: ${errorMessage}. ` +
+              'All fallback methods (Kubernetes API, ArgoCD API, and CLI) have been exhausted.',
+          );
+        }
+        // ArgoCD CLI via CliUtils returns { output: string }
+        // We want to return structured data to mirror enhanced behavior
+        if (result === undefined || result === null) {
+          throw new Error(`ArgoCD CLI returned empty result for application "${appName}"`);
+        }
+        const text =
+          typeof result === 'object' && result !== null && 'output' in result
+            ? String((result as any).output || '')
+            : typeof result === 'string'
+              ? result
+              : JSON.stringify(result);
+        const logLines = text
+          .split('\n')
+          .map((l) => l.trimEnd())
+          .filter((l) => l.length > 0);
+        return markTransport(
+          {
+            appName,
+            namespace,
+            container,
+            lineCount: logLines.length,
+            logs: logLines,
+            options: {
+              follow: Boolean(follow),
+              previous: Boolean(previous),
+              since,
+              sinceTime,
+              tailLines: tailLinesValue,
+              timestamps: Boolean(timestamps),
+              group,
+              kind,
+              name,
+              server,
+              grpcWeb: Boolean(grpcWeb),
+              plaintext: Boolean(plaintext),
+              insecure: Boolean(insecure),
+            },
+            transport: 'cli',
+          },
+          'cli',
+        );
       }
       default:
         throw new Error(`Unsupported operation: ${operation}`);

@@ -1,6 +1,6 @@
 import { MCPServer } from '../server/MCPServer.js';
 import winston from 'winston';
-import { type ArgoCDBaseTool, ArgoCDAppTool, ArgoCDAppLogsTool } from '../tools/argocd/index.js';
+import { type ArgoCDBaseTool, ArgoCDAppTool } from '../tools/argocd/index.js';
 import { BaseToolsPlugin } from './BaseToolsPlugin.js';
 
 /**
@@ -10,7 +10,7 @@ export class ArgoCDToolsPlugin extends BaseToolsPlugin<ArgoCDBaseTool> {
   name = 'argocd-tools';
 
   protected createToolInstances(): ArgoCDBaseTool[] {
-    return [new ArgoCDAppTool(), new ArgoCDAppLogsTool()];
+    return [new ArgoCDAppTool()];
   }
 
   static getCommandNames(): string[] {

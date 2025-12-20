@@ -5,6 +5,8 @@ export interface ToolNamespaceInfo {
   methodName: string;
 }
 
+// Order matters: more specific prefixes should come before less specific ones
+// (e.g., 'argocd_' before 'argo_' to ensure correct matching)
 const NAMESPACE_PREFIXES: Array<{ prefix: string; namespace: ToolNamespace }> = [
   { prefix: 'kube_', namespace: 'kubernetes' },
   { prefix: 'helm_', namespace: 'helm' },

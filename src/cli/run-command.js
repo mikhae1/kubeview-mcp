@@ -358,7 +358,7 @@ function generateExampleParams(commandName, params) {
     argocd_app_list: ['--selector=app=myapp'],
     argocd_app_get: ['--appName=my-app'],
     argocd_app_resources: ['--appName=my-app'],
-    argocd_app_logs: ['--appName=my-app', '--container=main'],
+    argocd_app: ['--operation=logs', '--appName=my-app', '--container=main'],
     argocd_app_history: ['--appName=my-app'],
     argocd_app_status: ['--appName=my-app'],
   };

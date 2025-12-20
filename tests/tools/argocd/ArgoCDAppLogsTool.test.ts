@@ -1,4 +1,4 @@
-import { ArgoCDAppLogsTool } from '../../../src/tools/argocd/ArgoCDAppLogsTool';
+import { ArgoCDAppTool } from '../../../src/tools/argocd/ArgoCDAppTool';
 import * as BaseTool from '../../../src/tools/argocd/BaseTool';
 
 // Mock dependencies
@@ -11,13 +11,13 @@ jest.mock('../../../src/tools/argocd/BaseTool', () => ({
 // Mock global fetch
 global.fetch = jest.fn();
 
-describe('ArgoCDAppLogsTool', () => {
-  let tool: ArgoCDAppLogsTool;
+describe('ArgoCDAppTool - logs operation', () => {
+  let tool: ArgoCDAppTool;
   const executeArgoCDCommandMock = BaseTool.executeArgoCDCommand as jest.Mock;
   const fetchMock = global.fetch as jest.Mock;
 
   beforeEach(() => {
-    tool = new ArgoCDAppLogsTool();
+    tool = new ArgoCDAppTool();
     jest.clearAllMocks();
     process.env.ARGOCD_AUTH_TOKEN = 'test-token';
     process.env.ARGOCD_SERVER = 'argocd.example.com';
@@ -35,7 +35,7 @@ describe('ArgoCDAppLogsTool', () => {
     // Setup CLI success with wrapped output (simulating current CliUtils behavior)
     executeArgoCDCommandMock.mockResolvedValue({ output: 'log line 1\nlog line 2' });
 
-    const result = await tool.execute({ appName: 'test-app' });
+    const result = await tool.execute({ operation: 'logs', appName: 'test-app' });
 
     // Should have tried API first (resource tree)
     expect(fetchMock).toHaveBeenCalled();
@@ -68,7 +68,7 @@ describe('ArgoCDAppLogsTool', () => {
       text: async () => 'api log line 1',
     });
 
-    const result = await tool.execute({ appName: 'test-app' });
+    const result = await tool.execute({ operation: 'logs', appName: 'test-app' });
 
     expect(result).toMatchObject({
       appName: 'test-app',
