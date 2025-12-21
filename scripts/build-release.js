@@ -27,19 +27,21 @@ function getCommitsSinceTag(tag) {
       encoding: 'utf8',
       cwd: rootDir
     }).trim();
-    return commits ? commits.split('\n').map(line => {
-      const [hash, subject, ...bodyParts] = line.split('|');
-      const body = bodyParts.join('|');
-      return { hash, subject, body };
-    }) : [];
+    return commits ? commits.split('\n')
+      .map(line => {
+        const [hash, subject, ...bodyParts] = line.split('|');
+        const body = bodyParts.join('|');
+        return { hash, subject: subject || '', body: body || '' };
+      })
+      .filter(commit => commit.subject && commit.hash) : [];
   } catch {
     return [];
   }
 }
 
 function categorizeCommit(commit) {
-  const subject = commit.subject.toLowerCase();
-  const body = commit.body.toLowerCase();
+  const subject = (commit.subject || '').toLowerCase();
+  const body = (commit.body || '').toLowerCase();
   const combined = `${subject} ${body}`;
 
   if (subject.startsWith('feat:') || subject.startsWith('add:') || /^(add|feature|feat)\b/i.test(subject)) {
@@ -81,6 +83,7 @@ function replaceVersionTokens(message, version) {
 }
 
 function formatCommitMessage(subject, version) {
+  if (!subject) return '';
   // Remove common prefixes
   const cleaned = subject
     .replace(/^(feat|fix|chore|refactor|add|change|remove|security|docs|style|test|perf|ci|build|revert):\s*/i, '')

@@ -1,5 +1,6 @@
 import { ArgoGetTool } from '../../src/tools/argo/ArgoGetTool.js';
 import { executeArgoCommand } from '../../src/tools/argo/BaseTool.js';
+import { ArgoToolsPlugin } from '../../src/plugins/ArgoToolsPlugin.js';
 
 // Mock executeArgoCommand
 jest.mock('../../src/tools/argo/BaseTool.js', () => ({
@@ -11,18 +12,35 @@ jest.mock('../../src/tools/argo/BaseTool.js', () => ({
 const mockGetNamespacedCustomObject = jest.fn();
 const mockRefreshCurrentContext = jest.fn();
 
+const createMockKubernetesClient = () => ({
+  refreshCurrentContext: mockRefreshCurrentContext,
+  customObjects: {
+    getNamespacedCustomObject: mockGetNamespacedCustomObject,
+  },
+});
+
 jest.mock('../../src/kubernetes/KubernetesClient.js', () => {
   return {
-    KubernetesClient: jest.fn().mockImplementation(() => ({
-      refreshCurrentContext: mockRefreshCurrentContext,
-      customObjects: {
-        getNamespacedCustomObject: mockGetNamespacedCustomObject,
-      },
-    })),
+    KubernetesClient: jest.fn().mockImplementation(() => createMockKubernetesClient()),
   };
 });
 
 const mockExecuteArgoCommand = executeArgoCommand as jest.MockedFunction<typeof executeArgoCommand>;
+
+function parseMcpJson(result: any): any {
+  const text = result?.content?.[0]?.text;
+  return text ? JSON.parse(String(text)) : undefined;
+}
+
+jest.mock('../../src/plugins/KubernetesToolsPlugin.js', () => {
+  const createOrReuseClientMock = jest.fn();
+  return {
+    KubernetesToolsPlugin: jest.fn().mockImplementation(() => ({
+      createOrReuseClient: createOrReuseClientMock,
+    })),
+    __k8sPluginMocks: { createOrReuseClientMock },
+  };
+});
 
 describe('ArgoGetTool', () => {
   let argoGetTool: ArgoGetTool;
@@ -68,7 +86,8 @@ describe('ArgoGetTool', () => {
 
       mockGetNamespacedCustomObject.mockResolvedValue({ body: expectedResult });
 
-      const result = await argoGetTool.execute(params);
+      const mockClient = createMockKubernetesClient() as any;
+      const result = await argoGetTool.execute(params, mockClient);
 
       // Should verify it used the K8s API, NOT the CLI command
       expect(mockGetNamespacedCustomObject).toHaveBeenCalledWith({
@@ -79,7 +98,7 @@ describe('ArgoGetTool', () => {
         name: 'test-workflow',
       });
       expect(mockExecuteArgoCommand).not.toHaveBeenCalled();
-      expect(result).toEqual(expectedResult);
+      expect(parseMcpJson(result)).toEqual(expectedResult);
     });
 
     it('should include namespace when provided (K8s API)', async () => {
@@ -91,7 +110,8 @@ describe('ArgoGetTool', () => {
       const expectedResult = { metadata: { name: 'test-workflow' } };
       mockGetNamespacedCustomObject.mockResolvedValue({ body: expectedResult });
 
-      await argoGetTool.execute(params);
+      const mockClient = createMockKubernetesClient() as any;
+      await argoGetTool.execute(params, mockClient);
 
       expect(mockGetNamespacedCustomObject).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -162,36 +182,21 @@ describe('ArgoGetTool', () => {
       ]);
     });
 
-    it('should handle K8s API failure by NOT falling back to CLI (unless we change logic)', async () => {
-      // Current logic:
-      /*
-        if (outputFormat === 'json') {
-          try { return await k8s... }
-          catch (error) {
-             if (!isRecoverable(error)) throw error;
-             // if recoverable, falls through? No, wait.
-          }
-        }
-      */
-      // `isRecoverableK8sError` returns true for 404/403.
-      // If it IS recoverable, it DOES NOT throw, so it continues to CLI code below.
-      // So we CAN test fallback.
-
+    it('should handle K8s API failure by falling back to CLI', async () => {
       const params = {
         workflowName: 'non-existent-workflow',
       };
 
-      // Mock 404
+      // Mock 404 (recoverable error)
       mockGetNamespacedCustomObject.mockRejectedValue({
         body: { code: 404, reason: 'NotFound' },
       });
 
-      const error = new Error('workflow not found');
-      mockExecuteArgoCommand.mockRejectedValue(error);
+      const expectedResult = { metadata: { name: 'non-existent-workflow' } };
+      mockExecuteArgoCommand.mockResolvedValue({ output: JSON.stringify(expectedResult) });
 
-      await expect(argoGetTool.execute(params)).rejects.toThrow(
-        'Failed to get Argo workflow non-existent-workflow: workflow not found',
-      );
+      const mockClient = createMockKubernetesClient() as any;
+      const result = await argoGetTool.execute(params, mockClient);
 
       // Verify it tried K8s first
       expect(mockGetNamespacedCustomObject).toHaveBeenCalled();
@@ -202,24 +207,54 @@ describe('ArgoGetTool', () => {
         '-o',
         'json',
       ]);
+      expect(parseMcpJson(result)).toBeDefined();
     });
 
-    it('should throw on non-recoverable K8s error', async () => {
+    it('should fallback to CLI on non-recoverable K8s error', async () => {
       const params = {
         workflowName: 'test-workflow',
       };
 
-      // Mock 500
+      // Mock 500 (non-recoverable error, but we still fallback to CLI)
       mockGetNamespacedCustomObject.mockRejectedValue({
         body: { code: 500, reason: 'InternalServerError' },
       });
 
-      await expect(argoGetTool.execute(params)).rejects.toThrow(
-        'Failed to get Argo workflow test-workflow via Kubernetes API',
-      );
+      const expectedResult = { metadata: { name: 'test-workflow' } };
+      mockExecuteArgoCommand.mockResolvedValue({ output: JSON.stringify(expectedResult) });
+
+      const mockClient = createMockKubernetesClient() as any;
+      const result = await argoGetTool.execute(params, mockClient);
 
       expect(mockGetNamespacedCustomObject).toHaveBeenCalled();
+      // Should fallback to CLI
+      expect(mockExecuteArgoCommand).toHaveBeenCalled();
+      expect(parseMcpJson(result)).toBeDefined();
+    });
+
+    it('ArgoToolsPlugin.executeCommand should try to create Kubernetes client in CLI/static mode and pass it to the tool', async () => {
+      const params = {
+        workflowName: 'test-workflow',
+        outputFormat: 'json',
+      };
+
+      const expectedResult = {
+        metadata: { name: 'test-workflow' },
+        status: { phase: 'Succeeded' },
+      };
+
+      const mockClient = createMockKubernetesClient() as any;
+      const { __k8sPluginMocks } = jest.requireMock('../../src/plugins/KubernetesToolsPlugin.js');
+      (__k8sPluginMocks.createOrReuseClientMock as jest.Mock).mockResolvedValue(mockClient);
+
+      mockGetNamespacedCustomObject.mockResolvedValue({ body: expectedResult });
+
+      const result = await ArgoToolsPlugin.executeCommand('argo_get', params as any);
+
+      expect(__k8sPluginMocks.createOrReuseClientMock).toHaveBeenCalled();
+      expect(mockGetNamespacedCustomObject).toHaveBeenCalled();
       expect(mockExecuteArgoCommand).not.toHaveBeenCalled();
+      expect(parseMcpJson(result)).toEqual(expectedResult);
     });
   });
 });

@@ -22,6 +22,21 @@ import * as HelmToolClasses from '../../dist/src/tools/helm/index.js';
 import * as ArgoToolClasses from '../../dist/src/tools/argo/index.js';
 import * as ArgoCDToolClasses from '../../dist/src/tools/argocd/index.js';
 
+function unwrapMcpToolResult(result) {
+  if (!result || typeof result !== 'object') return { isMcp: false, value: result };
+  if (!Array.isArray(result.content)) return { isMcp: false, value: result };
+  const blocks = result.content;
+  const textBlocks = blocks.filter((b) => b && b.type === 'text' && typeof b.text === 'string');
+  const combinedText = textBlocks.map((b) => b.text).join('\n');
+  let parsed;
+  try {
+    parsed = combinedText ? JSON.parse(combinedText) : undefined;
+  } catch {
+    parsed = undefined;
+  }
+  return { isMcp: true, blocks, text: combinedText, parsed };
+}
+
 // Create run_code tool instance for CLI usage
 function createRunCodeToolForCLI() {
   // Create a minimal tool executor that can call the other CLI commands
@@ -589,7 +604,8 @@ async function main() {
     } else if (commandInfo.type === 'argocd') {
       // Use ArgoCDToolsPlugin for ArgoCD commands
       result = await ArgoCDToolsPlugin.executeCommand(resolvedCommandName, params);
-      const transport = result && typeof result === 'object' ? result.__transport : undefined;
+      const unwrapped = unwrapMcpToolResult(result);
+      const transport = unwrapped && unwrapped.parsed ? unwrapped.parsed.transport : undefined;
       if (transport === 'k8s') {
         console.log('\nExecuting ArgoCD API call...');
       } else {
@@ -603,11 +619,17 @@ async function main() {
 
     // Output the result
     console.log('\nResult:');
-    if (result && result.output && typeof result.output === 'string') {
-      // For YAML or text output, print directly
+    const unwrapped = unwrapMcpToolResult(result);
+    if (unwrapped.isMcp) {
+      const text = unwrapped.text || '';
+      if (text.trim().length > 0) {
+        console.log(text);
+      } else {
+        console.log(JSON.stringify(result, null, 2));
+      }
+    } else if (result && result.output && typeof result.output === 'string') {
       console.log(result.output);
     } else {
-      // For JSON output, pretty print
       console.log(JSON.stringify(result, null, 2));
     }
   } catch (error) {

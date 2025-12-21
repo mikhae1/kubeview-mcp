@@ -113,7 +113,11 @@ export class KubernetesToolsPlugin extends BaseToolsPlugin<BaseTool> {
     return plugin.withTimeout(execPromise, timeoutMs, cmd.tool?.name || commandName);
   }
 
-  private async createOrReuseClient(): Promise<KubernetesClient> {
+  /**
+   * Get or create a Kubernetes client, reusing cached instances when possible.
+   * This method can be called by other plugins to share the same client instance.
+   */
+  public async createOrReuseClient(): Promise<KubernetesClient> {
     try {
       // Reuse client by current context if available and not expired
       const tempClientForContext = new KubernetesClient(this.config);

@@ -1,35 +1,16 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
+import { toMcpToolResult } from '../../utils/McpToolResult.js';
 import {
   ArgoBaseTool,
   ArgoCommonSchemas,
   executeArgoCommand,
   validateArgoCLI,
+  isRecoverableK8sError,
+  markTransport,
 } from './BaseTool.js';
 
-function buildKubernetesClientFromEnv(): KubernetesClient {
-  const context = process.env.MCP_KUBE_CONTEXT;
-  const skipTlsEnv = process.env.MCP_K8S_SKIP_TLS_VERIFY;
-  const skipTlsVerify = skipTlsEnv === 'true' || skipTlsEnv === '1';
-
-  return new KubernetesClient({
-    context: context && context.trim().length > 0 ? context.trim() : undefined,
-    skipTlsVerify,
-  });
-}
-
-function isRecoverableK8sError(error: any): boolean {
-  const statusCode = error?.statusCode ?? error?.response?.statusCode;
-  if (statusCode === 404 || statusCode === 403 || statusCode === 401) return true;
-  const code = error?.body?.code;
-  if (code === 404 || code === 403 || code === 401) return true;
-  const reason = error?.body?.reason;
-  if (reason === 'NotFound' || reason === 'Forbidden' || reason === 'Unauthorized') return true;
-  return false;
-}
-
-async function getWorkflowViaK8s(params: any): Promise<any> {
-  const client = buildKubernetesClientFromEnv();
+async function getWorkflowViaK8s(params: any, client: KubernetesClient): Promise<any> {
   await client.refreshCurrentContext();
 
   const group = 'argoproj.io';
@@ -92,19 +73,18 @@ export class ArgoGetTool implements ArgoBaseTool {
     },
   };
 
-  async execute(params: any): Promise<any> {
+  async execute(params: any, client?: KubernetesClient): Promise<any> {
     const outputFormat = params?.outputFormat || 'json';
-    if (outputFormat === 'json') {
+    if (outputFormat === 'json' && client) {
+      // Try Kubernetes API first if client is available
       try {
-        return await getWorkflowViaK8s(params);
+        const result = await getWorkflowViaK8s(params, client);
+        return toMcpToolResult(markTransport(result, 'k8s'));
       } catch (error: any) {
         if (!isRecoverableK8sError(error)) {
-          throw new Error(
-            `Failed to get Argo workflow ${params.workflowName} via Kubernetes API: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
+          // Non-recoverable error, fallback to CLI
         }
+        // Recoverable error (404, 403, etc.), fallback to CLI
       }
     }
 
@@ -142,10 +122,11 @@ export class ArgoGetTool implements ArgoBaseTool {
     try {
       await validateArgoCLI();
       const result = await executeArgoCommand(args);
-      if (typeof result === 'object' && result !== null && 'output' in result) {
-        return (result as any).output;
-      }
-      return result;
+      const output =
+        typeof result === 'object' && result !== null && 'output' in result
+          ? (result as any).output
+          : result;
+      return toMcpToolResult(markTransport(output, 'cli'));
     } catch (error) {
       throw new Error(
         `Failed to get Argo workflow ${params.workflowName}: ${

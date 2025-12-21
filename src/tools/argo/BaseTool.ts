@@ -1,5 +1,6 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { executeCliCommand, validateCli } from '../../utils/CliUtils.js';
+import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
 
 /**
  * Base interface for all Argo MCP tool commands
@@ -12,8 +13,10 @@ export interface ArgoBaseTool {
 
   /**
    * Execute the command with given parameters
+   * @param params Command parameters
+   * @param client Optional Kubernetes client (provided by plugin when available)
    */
-  execute(params: any): Promise<any>;
+  execute(params: any, client?: KubernetesClient): Promise<any>;
 }
 
 /**
@@ -71,4 +74,31 @@ export async function executeArgoCommand(args: string[], argoExecutable = 'argo'
  */
 export async function validateArgoCLI(): Promise<void> {
   return validateCli('argo', ['version'], 'ARGO_TIMEOUT');
+}
+
+/**
+ * Check if a Kubernetes API error is recoverable (should trigger fallback to CLI)
+ */
+export function isRecoverableK8sError(error: any): boolean {
+  const statusCode = error?.statusCode ?? error?.response?.statusCode;
+  if (statusCode === 404 || statusCode === 403 || statusCode === 401) return true;
+  const code = error?.body?.code;
+  if (code === 404 || code === 403 || code === 401) return true;
+  const reason = error?.body?.reason;
+  if (reason === 'NotFound' || reason === 'Forbidden' || reason === 'Unauthorized') return true;
+  return false;
+}
+
+/**
+ * Mark the transport method used (k8s, cli) in the result
+ */
+export function markTransport<T>(value: T, transport: 'k8s' | 'cli'): T {
+  if (value && typeof value === 'object') {
+    Object.defineProperty(value as any, '__transport', {
+      value: transport,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  return value;
 }

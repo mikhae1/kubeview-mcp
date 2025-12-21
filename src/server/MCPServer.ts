@@ -18,6 +18,7 @@ import {
 import winston from 'winston';
 import TransportStream from 'winston-transport';
 import { isSensitiveMaskEnabled, maskObjectDeep } from '../utils/SensitiveData.js';
+import { isMcpToolResult } from '../utils/McpToolResult.js';
 
 const LOG_LEVEL_ORDER: LoggingLevel[] = [
   'debug',
@@ -419,6 +420,10 @@ export class MCPServer {
 
       try {
         const result = await toolEntry.handler(request.params.arguments);
+
+        if (isMcpToolResult(result)) {
+          return result;
+        }
         const outputPayload = isSensitiveMaskEnabled() ? maskObjectDeep(result) : result;
         return {
           content: [
@@ -584,6 +589,13 @@ export class MCPServer {
       this.logger.error(`Failed to load plugin: ${plugin.name}`, error);
       throw error;
     }
+  }
+
+  /**
+   * Get a loaded plugin by name
+   */
+  public getPlugin(name: string): MCPPlugin | undefined {
+    return this.plugins.get(name);
   }
 
   /**

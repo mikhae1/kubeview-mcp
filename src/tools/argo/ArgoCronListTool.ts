@@ -1,5 +1,50 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { ArgoBaseTool, ArgoCommonSchemas, executeArgoCommand } from './BaseTool.js';
+import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
+import { toMcpToolResult } from '../../utils/McpToolResult.js';
+import {
+  ArgoBaseTool,
+  ArgoCommonSchemas,
+  executeArgoCommand,
+  isRecoverableK8sError,
+  markTransport,
+} from './BaseTool.js';
+
+async function listCronWorkflowsViaK8s(params: any, client: KubernetesClient): Promise<any> {
+  await client.refreshCurrentContext();
+
+  const group = 'argoproj.io';
+  const version = 'v1alpha1';
+  const plural = 'cronworkflows';
+  const labelSelector = params?.labelSelector || params?.selector;
+
+  const allNamespaces = Boolean(params?.allNamespaces);
+  const namespace = params?.namespace || 'argo';
+
+  const resp = allNamespaces
+    ? ((await client.customObjects.listClusterCustomObject({
+        group,
+        version,
+        plural,
+        labelSelector,
+      })) as any)
+    : ((await client.customObjects.listNamespacedCustomObject({
+        group,
+        version,
+        namespace,
+        plural,
+        labelSelector,
+      })) as any);
+
+  const body = (resp?.body ?? resp) as any;
+  const items = Array.isArray(body?.items) ? body.items : [];
+  let filtered = items;
+
+  if (typeof params?.maxCronWorkflows === 'number' && Number.isFinite(params.maxCronWorkflows)) {
+    filtered = filtered.slice(0, Math.max(0, params.maxCronWorkflows));
+  }
+
+  return { ...body, items: filtered };
+}
 
 /**
  * List Argo cron workflows
@@ -37,7 +82,21 @@ export class ArgoCronListTool implements ArgoBaseTool {
     },
   };
 
-  async execute(params: any): Promise<any> {
+  async execute(params: any, client?: KubernetesClient): Promise<any> {
+    // Try Kubernetes API first if client is available
+    const outputFormat = params?.outputFormat || 'wide';
+    if ((outputFormat === 'wide' || outputFormat === 'name') && client) {
+      try {
+        const result = await listCronWorkflowsViaK8s(params, client);
+        return toMcpToolResult(markTransport(result, 'k8s'));
+      } catch (error: any) {
+        if (!isRecoverableK8sError(error)) {
+          // Non-recoverable error, fallback to CLI
+        }
+        // Recoverable error (404, 403, etc.), fallback to CLI
+      }
+    }
+
     const args = ['cron', 'list'];
 
     const labelSelector = params?.labelSelector || params?.selector;
@@ -71,7 +130,7 @@ export class ArgoCronListTool implements ArgoBaseTool {
 
     try {
       const result = await executeArgoCommand(args);
-      return result;
+      return toMcpToolResult(markTransport(result, 'cli'));
     } catch (error) {
       throw new Error(
         `Failed to list Argo cron workflows: ${error instanceof Error ? error.message : String(error)}`,

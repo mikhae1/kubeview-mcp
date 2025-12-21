@@ -2,6 +2,7 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import * as https from 'https';
 import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
 import { PodOperations } from '../../kubernetes/resources/PodOperations.js';
+import { toMcpToolResult } from '../../utils/McpToolResult.js';
 import {
   ArgoCDBaseTool,
   ArgoCDCommonSchemas,
@@ -72,7 +73,7 @@ function parseDurationToSeconds(duration: string): number {
 }
 
 async function listApplicationsViaK8s(params: any): Promise<any> {
-  const client = buildKubernetesClientFromEnv();
+  const client = params?.client as KubernetesClient;
   await client.refreshCurrentContext();
 
   const group = 'argoproj.io';
@@ -132,8 +133,7 @@ async function listApplicationsViaK8s(params: any): Promise<any> {
   return { ...body, items: filtered };
 }
 
-async function getApplicationViaK8s(appName: string): Promise<any> {
-  const client = buildKubernetesClientFromEnv();
+async function getApplicationViaK8s(appName: string, client: KubernetesClient): Promise<any> {
   await client.refreshCurrentContext();
 
   const group = 'argoproj.io';
@@ -180,8 +180,7 @@ function filterApplicationResources(resources: any[], params: any): any[] {
   return filtered;
 }
 
-async function fetchLogsViaK8s(params: any): Promise<string> {
-  const client = buildKubernetesClientFromEnv();
+async function fetchLogsViaK8s(params: any, client: KubernetesClient): Promise<string> {
   await client.refreshCurrentContext();
   const podOps = new PodOperations(client);
 
@@ -464,7 +463,7 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
     },
   };
 
-  async execute(params: any): Promise<any> {
+  async execute(params: any, client?: KubernetesClient): Promise<any> {
     const {
       operation,
       appName,
@@ -501,89 +500,72 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
 
     if (operation === 'list' && effectiveOutputFormat === 'json') {
       try {
-        return markTransport(await listApplicationsViaK8s(params), 'k8s');
-      } catch (error: any) {
-        if (!isRecoverableK8sError(error)) {
-          throw new Error(
-            `Failed to list ArgoCD applications via Kubernetes API: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
+        const k8sClient = client || buildKubernetesClientFromEnv();
+        return toMcpToolResult(
+          markTransport(await listApplicationsViaK8s({ ...params, client: k8sClient }), 'k8s'),
+        );
+      } catch {
+        // Fallback to CLI
       }
     }
 
     if (operation === 'get' && appName && effectiveOutputFormat === 'json') {
       try {
-        return markTransport(await getApplicationViaK8s(appName), 'k8s');
-      } catch (error: any) {
-        if (!isRecoverableK8sError(error)) {
-          throw new Error(
-            `Failed to get ArgoCD application ${appName} via Kubernetes API: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
+        const k8sClient = client || buildKubernetesClientFromEnv();
+        return toMcpToolResult(
+          markTransport(await getApplicationViaK8s(appName, k8sClient), 'k8s'),
+        );
+      } catch {
+        // Fallback to CLI
       }
     }
 
     if (operation === 'resources' && appName && effectiveOutputFormat === 'json') {
       try {
-        const app = await getApplicationViaK8s(appName);
+        const k8sClient = client || buildKubernetesClientFromEnv();
+        const app = await getApplicationViaK8s(appName, k8sClient);
         const resources = filterApplicationResources(app?.status?.resources || [], params);
-        return markTransport({ appName, resources }, 'k8s');
-      } catch (error: any) {
-        if (!isRecoverableK8sError(error)) {
-          throw new Error(
-            `Failed to get ArgoCD application resources for ${appName} via Kubernetes API: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
+        return toMcpToolResult(markTransport({ appName, resources }, 'k8s'));
+      } catch {
+        // Fallback to CLI
       }
     }
 
     if (operation === 'history' && appName && effectiveOutputFormat === 'json') {
       try {
-        const app = await getApplicationViaK8s(appName);
-        return markTransport(
-          { appName, history: Array.isArray(app?.status?.history) ? app.status.history : [] },
-          'k8s',
+        const k8sClient = client || buildKubernetesClientFromEnv();
+        const app = await getApplicationViaK8s(appName, k8sClient);
+        return toMcpToolResult(
+          markTransport(
+            { appName, history: Array.isArray(app?.status?.history) ? app.status.history : [] },
+            'k8s',
+          ),
         );
-      } catch (error: any) {
-        if (!isRecoverableK8sError(error)) {
-          throw new Error(
-            `Failed to get ArgoCD application history for ${appName} via Kubernetes API: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
+      } catch {
+        // Fallback to CLI
       }
     }
 
     if (operation === 'status' && appName && effectiveOutputFormat === 'json') {
       try {
-        const app = await getApplicationViaK8s(appName);
-        return markTransport(
-          {
-            appName,
-            health: app?.status?.health,
-            sync: app?.status?.sync,
-            conditions: app?.status?.conditions,
-            operationState: app?.status?.operationState,
-            reconciledAt: app?.status?.reconciledAt,
-            summary: app?.status?.summary,
-          },
-          'k8s',
+        const k8sClient = client || buildKubernetesClientFromEnv();
+        const app = await getApplicationViaK8s(appName, k8sClient);
+        return toMcpToolResult(
+          markTransport(
+            {
+              appName,
+              health: app?.status?.health,
+              sync: app?.status?.sync,
+              conditions: app?.status?.conditions,
+              operationState: app?.status?.operationState,
+              reconciledAt: app?.status?.reconciledAt,
+              summary: app?.status?.summary,
+            },
+            'k8s',
+          ),
         );
-      } catch (error: any) {
-        if (!isRecoverableK8sError(error)) {
-          throw new Error(
-            `Failed to get ArgoCD application status for ${appName} via Kubernetes API: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
+      } catch {
+        // Fallback to CLI
       }
     }
 
@@ -592,32 +574,35 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
 
       // 1. Try Kubernetes API first (Direct access, no ArgoCD auth needed if we have kubeconfig)
       try {
-        const text = await fetchLogsViaK8s({ ...params, tail: tailLinesValue });
+        const k8sClient = client || buildKubernetesClientFromEnv();
+        const text = await fetchLogsViaK8s({ ...params, tail: tailLinesValue }, k8sClient);
         const logLines = String(text)
           .split('\n')
           .map((l) => l.trimEnd())
           .filter((l) => l.length > 0);
-        return markTransport(
-          {
-            appName,
-            namespace,
-            container,
-            lineCount: logLines.length,
-            logs: logLines,
-            options: {
-              follow: Boolean(follow),
-              previous: Boolean(previous),
-              since,
-              sinceTime,
-              tailLines: tailLinesValue,
-              timestamps: Boolean(timestamps),
-              group,
-              kind,
-              name,
+        return toMcpToolResult(
+          markTransport(
+            {
+              appName,
+              namespace,
+              container,
+              lineCount: logLines.length,
+              logs: logLines,
+              options: {
+                follow: Boolean(follow),
+                previous: Boolean(previous),
+                since,
+                sinceTime,
+                tailLines: tailLinesValue,
+                timestamps: Boolean(timestamps),
+                group,
+                kind,
+                name,
+              },
+              transport: 'k8s',
             },
-            transport: 'k8s',
-          },
-          'k8s',
+            'k8s',
+          ),
         );
       } catch (error: any) {
         if (!isRecoverableK8sError(error)) {
@@ -633,27 +618,29 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
           .split('\n')
           .map((l) => l.trimEnd())
           .filter((l) => l.length > 0);
-        return markTransport(
-          {
-            appName,
-            namespace,
-            container,
-            lineCount: logLines.length,
-            logs: logLines,
-            options: {
-              follow: Boolean(follow),
-              previous: Boolean(previous),
-              since,
-              sinceTime,
-              tailLines: tailLinesValue,
-              timestamps: Boolean(timestamps),
-              group,
-              kind,
-              name,
+        return toMcpToolResult(
+          markTransport(
+            {
+              appName,
+              namespace,
+              container,
+              lineCount: logLines.length,
+              logs: logLines,
+              options: {
+                follow: Boolean(follow),
+                previous: Boolean(previous),
+                since,
+                sinceTime,
+                tailLines: tailLinesValue,
+                timestamps: Boolean(timestamps),
+                group,
+                kind,
+                name,
+              },
+              transport: 'api',
             },
-            transport: 'api',
-          },
-          'api',
+            'api',
+          ),
         );
       } catch {
         // If API fails (including missing config), fall back to CLI
@@ -682,7 +669,7 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         addServerFlags(args);
         if (refresh) args.push('--refresh');
         try {
-          return markTransport(await executeArgoCDCommand(args), 'cli');
+          return toMcpToolResult(markTransport(await executeArgoCDCommand(args), 'cli'));
         } catch (error: any) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           throw new Error(`Failed to list ArgoCD applications: ${errorMessage}`);
@@ -697,7 +684,7 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         if (hardRefresh) args.push('--hard-refresh');
         addServerFlags(args);
         try {
-          return markTransport(await executeArgoCDCommand(args), 'cli');
+          return toMcpToolResult(markTransport(await executeArgoCDCommand(args), 'cli'));
         } catch (error: any) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           throw new Error(`Failed to get ArgoCD application "${appName}": ${errorMessage}`);
@@ -716,7 +703,7 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         if (sync) args.push('--sync', sync);
         addServerFlags(args);
         try {
-          return markTransport(await executeArgoCDCommand(args), 'cli');
+          return toMcpToolResult(markTransport(await executeArgoCDCommand(args), 'cli'));
         } catch (error: any) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           throw new Error(
@@ -731,7 +718,7 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         if (outputFormat) args.push('-o', outputFormat);
         addServerFlags(args);
         try {
-          return markTransport(await executeArgoCDCommand(args), 'cli');
+          return toMcpToolResult(markTransport(await executeArgoCDCommand(args), 'cli'));
         } catch (error: any) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           throw new Error(
@@ -746,7 +733,7 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
         if (outputFormat) args.push('-o', outputFormat);
         addServerFlags(args);
         try {
-          return markTransport(await executeArgoCDCommand(args), 'cli');
+          return toMcpToolResult(markTransport(await executeArgoCDCommand(args), 'cli'));
         } catch (error: any) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           throw new Error(
@@ -796,31 +783,33 @@ export class ArgoCDAppTool implements ArgoCDBaseTool {
           .split('\n')
           .map((l) => l.trimEnd())
           .filter((l) => l.length > 0);
-        return markTransport(
-          {
-            appName,
-            namespace,
-            container,
-            lineCount: logLines.length,
-            logs: logLines,
-            options: {
-              follow: Boolean(follow),
-              previous: Boolean(previous),
-              since,
-              sinceTime,
-              tailLines: tailLinesValue,
-              timestamps: Boolean(timestamps),
-              group,
-              kind,
-              name,
-              server,
-              grpcWeb: Boolean(grpcWeb),
-              plaintext: Boolean(plaintext),
-              insecure: Boolean(insecure),
+        return toMcpToolResult(
+          markTransport(
+            {
+              appName,
+              namespace,
+              container,
+              lineCount: logLines.length,
+              logs: logLines,
+              options: {
+                follow: Boolean(follow),
+                previous: Boolean(previous),
+                since,
+                sinceTime,
+                tailLines: tailLinesValue,
+                timestamps: Boolean(timestamps),
+                group,
+                kind,
+                name,
+                server,
+                grpcWeb: Boolean(grpcWeb),
+                plaintext: Boolean(plaintext),
+                insecure: Boolean(insecure),
+              },
+              transport: 'cli',
             },
-            transport: 'cli',
-          },
-          'cli',
+            'cli',
+          ),
         );
       }
       default:

@@ -1,5 +1,6 @@
 import { ArgoCDAppTool } from '../../../src/tools/argocd/ArgoCDAppTool';
 import * as BaseTool from '../../../src/tools/argocd/BaseTool';
+import { ArgoCDToolsPlugin } from '../../../src/plugins/ArgoCDToolsPlugin';
 
 // Mock dependencies
 jest.mock('../../../src/tools/argocd/BaseTool', () => ({
@@ -11,6 +12,21 @@ jest.mock('../../../src/tools/argocd/BaseTool', () => ({
 // Mock global fetch
 global.fetch = jest.fn();
 
+function parseMcpJson(result: any): any {
+  const text = result?.content?.[0]?.text;
+  return text ? JSON.parse(String(text)) : undefined;
+}
+
+jest.mock('../../../src/plugins/KubernetesToolsPlugin.js', () => {
+  const createOrReuseClientMock = jest.fn();
+  return {
+    KubernetesToolsPlugin: jest.fn().mockImplementation(() => ({
+      createOrReuseClient: createOrReuseClientMock,
+    })),
+    __k8sPluginMocks: { createOrReuseClientMock },
+  };
+});
+
 describe('ArgoCDAppTool - logs operation', () => {
   let tool: ArgoCDAppTool;
   const executeArgoCDCommandMock = BaseTool.executeArgoCDCommand as jest.Mock;
@@ -21,6 +37,45 @@ describe('ArgoCDAppTool - logs operation', () => {
     jest.clearAllMocks();
     process.env.ARGOCD_AUTH_TOKEN = 'test-token';
     process.env.ARGOCD_SERVER = 'argocd.example.com';
+  });
+
+  describe('ArgoCDToolsPlugin.executeCommand', () => {
+    it('should try to create Kubernetes client and use Kubernetes API for list operation when available', async () => {
+      const mockListNamespacedCustomObject = jest.fn();
+      const mockRefreshCurrentContext = jest.fn();
+
+      const mockClient = {
+        refreshCurrentContext: mockRefreshCurrentContext,
+        customObjects: {
+          listNamespacedCustomObject: mockListNamespacedCustomObject,
+        },
+      } as any;
+
+      const { __k8sPluginMocks } = jest.requireMock(
+        '../../../src/plugins/KubernetesToolsPlugin.js',
+      );
+      (__k8sPluginMocks.createOrReuseClientMock as jest.Mock).mockResolvedValue(mockClient);
+
+      const expected = { items: [{ metadata: { name: 'app-1' } }] };
+      mockListNamespacedCustomObject.mockResolvedValue({ body: expected });
+
+      const result = await ArgoCDToolsPlugin.executeCommand('argocd_app', {
+        operation: 'list',
+        outputFormat: 'json',
+      });
+
+      expect(__k8sPluginMocks.createOrReuseClientMock).toHaveBeenCalled();
+      expect(mockRefreshCurrentContext).toHaveBeenCalled();
+      expect(mockListNamespacedCustomObject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          group: 'argoproj.io',
+          version: 'v1alpha1',
+          namespace: 'argocd',
+          plural: 'applications',
+        }),
+      );
+      expect(parseMcpJson(result)).toEqual(expected);
+    });
   });
 
   afterEach(() => {
@@ -45,7 +100,7 @@ describe('ArgoCDAppTool - logs operation', () => {
       expect.arrayContaining(['app', 'logs', 'test-app']),
     );
 
-    expect(result).toMatchObject({
+    expect(parseMcpJson(result)).toMatchObject({
       appName: 'test-app',
       lineCount: 2,
       logs: ['log line 1', 'log line 2'],
@@ -70,7 +125,7 @@ describe('ArgoCDAppTool - logs operation', () => {
 
     const result = await tool.execute({ operation: 'logs', appName: 'test-app' });
 
-    expect(result).toMatchObject({
+    expect(parseMcpJson(result)).toMatchObject({
       appName: 'test-app',
       lineCount: 1,
       logs: ['api log line 1'],

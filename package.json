@@ -22,7 +22,7 @@
     "*.md"
   ],
   "scripts": {
-    "build": "node scripts/build-release.js && tsc",
+    "build": "node scripts/build-version.js && tsc",
     "dev": "tsx --watch src/cli/cli.ts",
     "start": "tsc && node bin/kubeview-mcp.js",
     "setup": "node bin/setup.js",
@@ -36,8 +36,8 @@
     "command": "node src/cli/run-command.js",
     "release:qa": "npm run lint && npm run typecheck && npm run test",
     "release:build": "npm run build",
-    "release:version": "node scripts/update-version.js",
-    "release": "npm run release:version && npm run release:qa && npm run release:build",
+    "release:version": "node scripts/build-release.js && node scripts/update-version.js",
+    "release": "npm run release:qa && npm run release:version && npm run release:build",
     "publish:commit": "git commit -m 'Release v$(node -p \"require('./package.json').version\")' || echo 'Commit failed'",
     "publish:tag": "VERSION=$(node -p \"require('./package.json').version\") && if git rev-parse \"v$VERSION\" >/dev/null 2>&1; then echo \"Tag v$VERSION already exists, skipping\"; else git tag \"v$VERSION\" && echo \"Tagged version v$VERSION\"; fi",
     "publish:npm": "npm publish",

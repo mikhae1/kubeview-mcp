@@ -15,6 +15,7 @@ import type {
 import { CodeModeConfig } from '../utils/CodeModeConfig.js';
 import { getToolNamespace, toCamelCase, formatToolAccessor } from '../utils/toolNamespaces.js';
 import type { ToolNamespace } from '../utils/toolNamespaces.js';
+import { isMcpToolResult } from '../utils/McpToolResult.js';
 
 const runCodeInputSchema = z.object({
   code: z.string().describe('TypeScript code to execute via the sandboxed runtime'),
@@ -548,6 +549,19 @@ return await tools.helm.get({
       throw new Error('Tool executor not available');
     }
     const result = await this.toolExecutor(qualifiedName, args || {});
+    if (isMcpToolResult(result)) {
+      const text = result.content
+        .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
+        .map((b: any) => b.text)
+        .join('\n');
+      let parsed: unknown = text;
+      try {
+        parsed = text ? JSON.parse(text) : text;
+      } catch {
+        parsed = text;
+      }
+      return this.unwrapResult(parsed);
+    }
     return this.unwrapResult(result);
   }
 
@@ -583,6 +597,15 @@ return await tools.helm.get({
 
     return `
 declare global {
+  interface McpTextContentBlock {
+    type: 'text';
+    text: string;
+  }
+
+  interface McpToolResult {
+    content: McpTextContentBlock[];
+  }
+
   interface ToolSummary {
     server: string;
     name: string;
