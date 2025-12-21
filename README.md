@@ -15,7 +15,7 @@ Learn more about the benefits of code mode and implementation in [Evicting MCP t
 - **🛡️ Read-Only & Safe**: Designed for production safety with zero write access and sensitive data masking.
 - **☸️ Kubernetes Integration**: List/get resources, fetch metrics, stream logs and events, execute commands, and tools to diagnose network issues.
 - **📦 Helm Support**: Inspect releases, values, manifests, and history.
-- **🐙 Argo Ecosystem**: Manage Argo Workflows and Argo CD applications.
+- **🐙 Argo Ecosystem**: Manage Argo Workflows and Argo CD applications using direct Kubernetes API or CLI.
 
 ---
 
@@ -25,7 +25,7 @@ Learn more about the benefits of code mode and implementation in [Evicting MCP t
 
 - Node.js ≥ 18
 - Access to a Kubernetes cluster
-- Optional CLIs on current $PATH if you want to use those plugins: `helm`, `argo`, `argocd`
+- Optionally, CLIs installed in current $PATH: `helm`, `argo`, `argocd`
 
 ### Installation
 

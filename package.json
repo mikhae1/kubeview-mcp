@@ -1,6 +1,6 @@
 {
   "name": "kubeview-mcp",
-  "version": "1.4.7",
+  "version": "1.5.0",
   "description": "Read-only MCP server enabling code-driven AI analysis of Kubernetes clusters",
   "mcpName": "io.github.mikhae1/kubeview",
   "main": "dist/src/index.js",
@@ -36,7 +36,7 @@
     "command": "node src/cli/run-command.js",
     "release:qa": "npm run lint && npm run typecheck && npm run test",
     "release:build": "npm run build",
-    "release:version": "node scripts/build-release.js && node scripts/update-version.js",
+    "release:version": "node scripts/update-version.js",
     "release": "npm run release:qa && npm run release:version && npm run release:build",
     "publish:commit": "git commit -m 'Release v$(node -p \"require('./package.json').version\")' || echo 'Commit failed'",
     "publish:tag": "VERSION=$(node -p \"require('./package.json').version\") && if git rev-parse \"v$VERSION\" >/dev/null 2>&1; then echo \"Tag v$VERSION already exists, skipping\"; else git tag \"v$VERSION\" && echo \"Tagged version v$VERSION\"; fi",
