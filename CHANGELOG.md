@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-01-14
+
+### Changed
+- **Add error logging for ArgoCD API log fetch failure**
+
 ## [1.5.0] - 2025-12-21
 
 ### Added
@@ -17,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Refactor ArgoCD tools to remove ArgoCDAppLogsTool and enhance ArgoCDAppTool**
 - **Release v1.5.0**
 - **Update README.md to enhance project description and add link to the article**
-
 
 ## [1.4.7] - 2025-12-03
 

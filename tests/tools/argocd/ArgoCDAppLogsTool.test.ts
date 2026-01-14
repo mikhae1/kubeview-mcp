@@ -29,11 +29,13 @@ jest.mock('../../../src/plugins/KubernetesToolsPlugin.js', () => {
 
 describe('ArgoCDAppTool - logs operation', () => {
   let tool: ArgoCDAppTool;
+  let consoleErrorSpy: jest.SpyInstance;
   const executeArgoCDCommandMock = BaseTool.executeArgoCDCommand as jest.Mock;
   const fetchMock = global.fetch as jest.Mock;
 
   beforeEach(() => {
     tool = new ArgoCDAppTool();
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     jest.clearAllMocks();
     process.env.ARGOCD_AUTH_TOKEN = 'test-token';
     process.env.ARGOCD_SERVER = 'argocd.example.com';
@@ -79,6 +81,7 @@ describe('ArgoCDAppTool - logs operation', () => {
   });
 
   afterEach(() => {
+    consoleErrorSpy.mockRestore();
     delete process.env.ARGOCD_AUTH_TOKEN;
     delete process.env.ARGOCD_SERVER;
   });
@@ -106,6 +109,18 @@ describe('ArgoCDAppTool - logs operation', () => {
       logs: ['log line 1', 'log line 2'],
       transport: 'cli',
     });
+  });
+
+  it('should log k8s errors before CLI fallback', async () => {
+    fetchMock.mockRejectedValue(new Error('API Error'));
+    executeArgoCDCommandMock.mockResolvedValue({ output: 'log line 1' });
+
+    await tool.execute({ operation: 'logs', appName: 'test-app' });
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      'ArgoCD API log fetch failed, falling back to CLI: ',
+      expect.stringContaining('listPodForAllNamespaces'),
+    );
   });
 
   it('should return raw text from direct API call when successful', async () => {
