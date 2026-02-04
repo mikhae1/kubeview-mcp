@@ -222,6 +222,102 @@ describe('MCPServer Integration Tests', () => {
       expect(mockHandler).toHaveBeenCalledWith({ namespace: 'default' });
     });
 
+    it('should execute the built-in plan_step tool', async () => {
+      await server.start();
+
+      const toolCallRequest = {
+        jsonrpc: '2.0',
+        id: 30,
+        method: 'tools/call',
+        params: {
+          name: 'plan_step',
+          arguments: {
+            step: 'Check node readiness before logs',
+            nextStepNeeded: true,
+            stepNumber: 1,
+            totalSteps: 2,
+          },
+        },
+      };
+
+      mockStdin.push(JSON.stringify(toolCallRequest) + '\n');
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const response = stdoutData.find((data) => data.includes('"id":30'));
+      expect(response).toBeDefined();
+
+      const parsedResponse = JSON.parse(response!);
+      expect(parsedResponse.result).toBeDefined();
+      expect(parsedResponse.result.content).toBeDefined();
+
+      const resultData = JSON.parse(parsedResponse.result.content[0].text);
+      expect(resultData.stepNumber).toBe(1);
+      expect(resultData.totalSteps).toBe(2);
+      expect(resultData.nextStepNeeded).toBe(true);
+      expect(resultData.stepHistoryLength).toBe(1);
+    });
+
+    it('should preserve plan_step state across tools/list requests', async () => {
+      await server.start();
+
+      mockStdin.push(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 31,
+          method: 'tools/call',
+          params: {
+            name: 'plan_step',
+            arguments: {
+              step: 'Initial investigation step',
+              nextStepNeeded: true,
+              stepNumber: 1,
+              totalSteps: 2,
+            },
+          },
+        }) + '\n',
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      mockStdin.push(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 32,
+          method: 'tools/list',
+          params: {},
+        }) + '\n',
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      mockStdin.push(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 33,
+          method: 'tools/call',
+          params: {
+            name: 'plan_step',
+            arguments: {
+              step: 'Follow-up investigation step',
+              nextStepNeeded: false,
+              stepNumber: 2,
+              totalSteps: 2,
+            },
+          },
+        }) + '\n',
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const response = stdoutData.find((data) => data.includes('"id":33'));
+      expect(response).toBeDefined();
+
+      const parsedResponse = JSON.parse(response!);
+      const resultData = JSON.parse(parsedResponse.result.content[0].text);
+      expect(resultData.stepHistoryLength).toBe(2);
+    });
+
     it('should handle errors for unknown tools', async () => {
       await server.start();
 
@@ -260,6 +356,38 @@ describe('MCPServer Integration Tests', () => {
 
       // Should log an error but not crash
       expect(server).toBeDefined();
+    });
+
+    it('should parse multiple JSON-RPC requests in a single stdin chunk', async () => {
+      await server.start();
+      const logger = server.getLogger() as any;
+
+      mockStdin.push(
+        `${JSON.stringify({ jsonrpc: '2.0', id: 13, method: 'tools/list', params: {} })}\n${JSON.stringify({ jsonrpc: '2.0', id: 14, method: 'tools/list', params: {} })}\n`,
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const malformedWarnings = logger.warn.mock.calls.filter(([message]: [string]) =>
+        String(message).includes('malformed JSON-RPC payload'),
+      );
+      expect(malformedWarnings).toHaveLength(0);
+    });
+
+    it('should emit a user-friendly warning for malformed JSON payloads', async () => {
+      await server.start();
+      const logger = server.getLogger() as any;
+
+      mockStdin.push('{"jsonrpc":"2.0","id":15,"method":"tools/list"\n');
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        'MCP transport connection issue: malformed JSON-RPC payload',
+        expect.objectContaining({
+          hint: 'Check that the client sends one valid JSON object per line to stdin.',
+        }),
+      );
     });
   });
 

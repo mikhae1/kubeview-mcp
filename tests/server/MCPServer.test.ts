@@ -74,6 +74,22 @@ describe('MCPServer', () => {
     });
   });
 
+  describe('built-in tools', () => {
+    it('should execute plan_step and return structured planning progress', async () => {
+      const result = (await server.executeTool('plan_step', {
+        step: 'Inspect failing workload',
+        nextStepNeeded: true,
+        stepNumber: 1,
+        totalSteps: 2,
+      })) as Record<string, unknown>;
+
+      expect(result.stepNumber).toBe(1);
+      expect(result.totalSteps).toBe(2);
+      expect(result.nextStepNeeded).toBe(true);
+      expect(result.stepHistoryLength).toBe(1);
+    });
+  });
+
   describe('registerTool', () => {
     it('should register a tool successfully', () => {
       const tool: Tool = {

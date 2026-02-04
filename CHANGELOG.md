@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-02-04
+
+### Changed
+- **MCP SDK compatibility hardening**: Pin `@modelcontextprotocol/sdk` to `^1.25.3`.
+- **Type import policy**: Disallow removed loose type exports (`Tools`, `Prompts`, `Resources`, `Roots`, `Sampling`) from `@modelcontextprotocol/sdk/types.js`.
+
+### Added
+- Introduced the plan_step tool for structured planning and tracking during investigations.
+- Added detailed skills documentation for debugging Kubernetes clusters in SKILL.md.
+- Improved error handling for malformed JSON-RPC payloads in MCPServer.
+- Added tests for the new plan_step tool and ensured compatibility with the updated SDK.
+
 ## [1.5.1] - 2026-01-14
 
 ### Changed

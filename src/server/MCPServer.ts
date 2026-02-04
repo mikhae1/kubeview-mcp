@@ -19,6 +19,8 @@ import winston from 'winston';
 import TransportStream from 'winston-transport';
 import { isSensitiveMaskEnabled, maskObjectDeep } from '../utils/SensitiveData.js';
 import { isMcpToolResult } from '../utils/McpToolResult.js';
+import { PlanStepTool } from '../tools/meta/PlanStepTool.js';
+import { StringDecoder } from 'node:string_decoder';
 
 const LOG_LEVEL_ORDER: LoggingLevel[] = [
   'debug',
@@ -141,6 +143,7 @@ export interface MCPServerOptions {
 }
 
 export class MCPServer {
+  private static readonly MAX_MALFORMED_STDIN_LOGS = 5;
   private server: Server;
   private transport: StdioServerTransport;
   private logger: winston.Logger;
@@ -150,7 +153,14 @@ export class MCPServer {
   private resourceTemplates: Map<string, ResourceTemplate> = new Map();
   private plugins: Map<string, MCPPlugin> = new Map();
   private prompts: Map<string, PromptEntry> = new Map();
+  private planStepTool?: PlanStepTool;
   private isShuttingDown = false;
+  private stdinChunkBuffer = '';
+  private malformedStdinCount = 0;
+  private readonly stdinDecoder = new StringDecoder('utf8');
+  private readonly logMalformedPayloadPreview =
+    process.env.MCP_LOG_MALFORMED_PAYLOAD_PREVIEW === 'true' ||
+    process.env.MCP_LOG_MALFORMED_PAYLOAD_PREVIEW === '1';
   private options: MCPServerOptions;
   private eventListeners: Array<{
     target: any;
@@ -207,6 +217,12 @@ export class MCPServer {
   }
 
   private registerBuiltInTools(): void {
+    this.planStepTool = new PlanStepTool();
+
+    this.registerTool(this.planStepTool.tool, async (params: unknown) => {
+      return this.planStepTool!.execute(params);
+    });
+
     const searchTool: Tool = {
       name: 'search_tools',
       description: 'Search registered tools by name or description.',
@@ -623,39 +639,72 @@ export class MCPServer {
    * Connect to the transport with improved error handling
    */
   private async connectWithErrorHandling(): Promise<void> {
-    // Add global handler for parse errors that might not be caught by the SDK
-    const originalStdinData = process.stdin.listeners('data') as Array<(chunk: Buffer) => void>;
-
-    // Add our handler before the SDK's handlers
-    process.stdin.removeAllListeners('data');
-
-    process.stdin.on('data', (chunk: Buffer) => {
+    // Validate incoming JSON-RPC frames without disrupting SDK listeners.
+    const validateChunk = (chunk: Buffer | string): void => {
       try {
-        // Try to parse as JSON to catch syntax errors early
-        const str = chunk.toString().trim();
-        if (str.length > 0) {
-          try {
-            JSON.parse(str);
-          } catch (err) {
-            this.logger.warn(
-              `Received invalid JSON: ${str.substring(0, 100)}${str.length > 100 ? '...' : ''}`,
-            );
-            this.logger.error('JSON parse error:', err);
-            // Continue processing - the SDK will handle the error
-          }
-        }
-      } catch (err) {
-        this.logger.error('Error in pre-processing stdin data:', err);
+        const asString = Buffer.isBuffer(chunk) ? this.stdinDecoder.write(chunk) : chunk;
+        if (asString) this.inspectIncomingTransportData(asString);
+      } catch (error) {
+        this.logger.warn('Failed to inspect incoming MCP transport data', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
-    });
+    };
 
-    // Re-add original listeners
-    for (const listener of originalStdinData) {
-      process.stdin.on('data', listener);
+    if (typeof process.stdin.prependListener === 'function') {
+      process.stdin.prependListener('data', validateChunk);
+      this.eventListeners.push({
+        target: process.stdin,
+        event: 'data',
+        handler: validateChunk,
+      });
+    } else {
+      this.addTrackedListener(process.stdin, 'data', validateChunk);
     }
 
     // Connect to the transport
     await this.server.connect(this.transport);
+  }
+
+  /**
+   * Inspect newline-delimited JSON-RPC messages and emit user-friendly diagnostics.
+   */
+  private inspectIncomingTransportData(chunk: string): void {
+    this.stdinChunkBuffer += chunk;
+    const lines = this.stdinChunkBuffer.split(/\r?\n/);
+    this.stdinChunkBuffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      this.inspectTransportLine(line);
+    }
+  }
+
+  private inspectTransportLine(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    try {
+      JSON.parse(trimmed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const payloadPreview =
+        this.logMalformedPayloadPreview && !isSensitiveMaskEnabled()
+          ? `${trimmed.slice(0, 160)}${trimmed.length > 160 ? '...' : ''}`
+          : undefined;
+
+      if (this.malformedStdinCount < MCPServer.MAX_MALFORMED_STDIN_LOGS) {
+        this.logger.warn('MCP transport connection issue: malformed JSON-RPC payload', {
+          reason: message,
+          payloadPreview,
+          payloadLength: trimmed.length,
+          hint: 'Check that the client sends one valid JSON object per line to stdin.',
+        });
+      } else if (this.malformedStdinCount === MCPServer.MAX_MALFORMED_STDIN_LOGS) {
+        this.logger.warn('Additional malformed MCP transport payloads are being suppressed');
+      }
+
+      this.malformedStdinCount += 1;
+    }
   }
 
   /**

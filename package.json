@@ -1,6 +1,6 @@
 {
   "name": "kubeview-mcp",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "Read-only MCP server enabling code-driven AI analysis of Kubernetes clusters",
   "homepage": "https://github.com/mikhae1/kubeview-mcp",
   "mcpName": "io.github.mikhae1/kubeview",
@@ -41,7 +41,7 @@
     "release": "npm run release:qa && npm run release:version && npm run release:build",
     "publish:commit": "git commit -m 'Release v$(node -p \"require('./package.json').version\")' || echo 'Commit failed'",
     "publish:tag": "VERSION=$(node -p \"require('./package.json').version\") && if git rev-parse \"v$VERSION\" >/dev/null 2>&1; then echo \"Tag v$VERSION already exists, skipping\"; else git tag \"v$VERSION\" && echo \"Tagged version v$VERSION\"; fi",
-    "publish:npm": "npm publish",
+    "publish:npm": "VERSION=$(node -p \"require('./package.json').version\") && if npm view \"$npm_package_name@$VERSION\" version >/dev/null 2>&1; then echo \"Version $VERSION already published, skipping npm publish\"; else npm whoami >/dev/null 2>&1 || npm login; npm publish; fi",
     "publish:git": "git push origin master --tags",
     "publish:mcp": "mcp-publisher login github && mcp-publisher publish server.json",
     "publish": "npm run publish:commit && npm run publish:npm && npm run publish:git && npm run publish:mcp"
@@ -78,7 +78,7 @@
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.3.0",
-    "@modelcontextprotocol/sdk": "^1.17.1",
+    "@modelcontextprotocol/sdk": "^1.25.3",
     "isolated-vm": "^6.0.2",
     "typescript": "^5.8.3",
     "winston": "^3.17.0",

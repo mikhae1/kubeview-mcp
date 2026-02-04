@@ -19,6 +19,14 @@ Learn more about the benefits of code mode and implementation in [Evicting MCP t
 
 ---
 
+## MCP SDK Compatibility
+
+- This project is pinned to `@modelcontextprotocol/sdk@^1.25.3`.
+- Legacy loose type imports (`Tools`, `Prompts`, `Resources`, `Roots`, `Sampling`) are disallowed.
+- This compatibility pass intentionally excludes Streamable HTTP transport migration and icon metadata rollout.
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -86,6 +94,16 @@ Configure the server using environment variables:
 
 ### Utilities
 - **`run_code`**: Execute sandboxed TypeScript code for complex tasks.
+- **`plan_step`**: Record step-by-step planning state for long, complex investigations.
+
+### Why `plan_step` really helps:
+
+1. **Stable multi-step planning without bloating chat context.**
+   Instead of dumping a massive plan into the conversation, the agent can store step-by-step progress in `plan_step` and keep user-facing responses clean.
+2. **A consistent state machine for long tasks.**
+   Complex workflows usually need: plan -> execute step 1 -> verify -> step 2 -> backtrack -> branch -> finalize. `plan_step` gives the agent a structured way to follow that lifecycle without losing track.
+3. **Better tool routing.**
+   Good agents alternate between thinking and acting. `plan_step` encourages that rhythm: log intent, call real tools, capture outcome, decide next step.
 
 ---
 
@@ -108,9 +126,9 @@ For complex tasks requiring logic, loops, or data processing, use **Code Mode**:
 "env": { "MCP_MODE": "code" }
 ```
 
-### 💡 Pro Tip: Code Mode Prompt
+### 💡 Pro Tip: `code-mode` MCP Prompt
 
-The server includes a built-in prompt named **`code-mode`** that injects the full TypeScript API documentation, tool overview, and examples into the context.
+The server includes a built-in MCP server prompt named **`code-mode`** that injects the full TypeScript API documentation, tool overview, and examples into the context.
 
 **In Cursor IDE**:
 Simply type `/kubeview/code-mode` in the prompt (or select it from the `/` prompt menu). This gives the AI the exact context it needs to write correct `run_code` scripts immediately.
