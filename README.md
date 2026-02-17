@@ -14,7 +14,7 @@ Learn more about the benefits of code mode and implementation in [Evicting MCP t
 - **🧠 Code Mode**: Sandboxed TypeScript environment for complex reasoning and multi-step workflows.
 - **🛡️ Read-Only & Safe**: Designed for production safety with zero write access and sensitive data masking.
 - **☸️ Kubernetes Integration**: List/get resources, fetch metrics, stream logs and events, execute commands, and tools to diagnose network issues.
-- **📦 Helm Support**: Inspect releases, values, manifests, and history.
+- **📦 Helm Support (API-first)**: Inspect releases, values, manifests, and history via Kubernetes API first, with the CLI fallback.
 - **🐙 Argo Ecosystem**: Manage Argo Workflows and Argo CD applications using direct Kubernetes API or CLI.
 
 ---
@@ -33,7 +33,7 @@ Learn more about the benefits of code mode and implementation in [Evicting MCP t
 
 - Node.js ≥ 18
 - Access to a Kubernetes cluster
-- Optionally, CLIs installed in current $PATH: `helm`, `argo`, `argocd`
+- Optionally, CLIs installed in current $PATH: `helm` (fallback only), `argo`, `argocd`
 
 ### Installation
 
@@ -64,18 +64,19 @@ Add to your `mcpServers` configuration (e.g., in Cursor or Claude Desktop):
 
 Configure the server using environment variables:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `KUBECONFIG` | Path to kubeconfig file | `~/.kube/config` |
-| `MCP_MODE` | Server mode: `all`, `code`, or `tools` | `all` |
-| `MCP_LOG_LEVEL` | Log level (`error`, `warn`, `info`, `debug`) | `info` |
-| `MCP_HIDE_SENSITIVE` | Enable global sensitive data masking | `false` |
+| Variable             | Description                                  | Default          |
+| -------------------- | -------------------------------------------- | ---------------- |
+| `KUBECONFIG`         | Path to kubeconfig file                      | `~/.kube/config` |
+| `MCP_MODE`           | Server mode: `all`, `code`, or `tools`       | `all`            |
+| `MCP_LOG_LEVEL`      | Log level (`error`, `warn`, `info`, `debug`) | `info`           |
+| `MCP_HIDE_SENSITIVE` | Enable global sensitive data masking         | `false`          |
 
 ---
 
 ## 🛠️ Tools Overview
 
 ### Kubernetes
+
 - **`kube_list`**: List resources or get cluster diagnostics.
 - **`kube_get`**: Describe specific resources (supports all K8s types).
 - **`kube_metrics`**: Fetch CPU/memory metrics for nodes and pods.
@@ -85,14 +86,25 @@ Configure the server using environment variables:
 - **`kube_net`**: Run in-cluster network diagnostics.
 
 ### Helm
-- **`helm_list`**: List Helm releases.
-- **`helm_get`**: Fetch release values, manifests, and history.
+
+- **`helm_list`**: List Helm releases (Kubernetes API first, CLI fallback).
+- **`helm_get`**: Fetch release values, manifests, notes, hooks, resources, status, and history (Kubernetes API first, CLI fallback).
+
+### Helm Execution Strategy
+
+- Helm tools are **API-first by default** and read Helm release metadata from Kubernetes storage backends (Secrets and ConfigMaps).
+- Helm CLI is retained as a compatibility fallback path.
+- In normal read-only scenarios with Kubernetes API access, Helm operations do not require the `helm` binary.
+- If Helm is configured with a non-Kubernetes storage backend (for example SQL), CLI fallback may be required.
+- For `helm_get`/`helm_list`, JSON/default behavior uses API first; non-JSON formatting may use CLI fallback.
 
 ### Argo
+
 - **`argo_list` / `argo_get`**: Manage Argo Workflows.
 - **`argocd_app`**: Inspect Argo CD applications and resources.
 
 ### Utilities
+
 - **`run_code`**: Execute sandboxed TypeScript code for complex tasks.
 - **`plan_step`**: Record step-by-step planning state for long, complex investigations.
 
@@ -138,6 +150,7 @@ Simply type `/kubeview/code-mode` in the prompt (or select it from the `/` promp
 ## 💻 Local Development
 
 1. **Clone & Install**:
+
    ```bash
    git clone https://github.com/mikhae1/kubeview-mcp.git
    cd kubeview-mcp
@@ -145,6 +158,7 @@ Simply type `/kubeview/code-mode` in the prompt (or select it from the `/` promp
    ```
 
 2. **Build & Run**:
+
    ```bash
    npm run build
    npm start

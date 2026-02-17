@@ -69,7 +69,11 @@ function createRunCodeToolForCLI() {
 
   // Add Kubernetes tools
   // eslint-disable-next-line no-unused-vars
-  const { CommonSchemas: _CommonSchemas, BaseTool: _BaseTool, ...kubernetesToolClasses } = KubernetesToolClasses;
+  const {
+    CommonSchemas: _CommonSchemas,
+    BaseTool: _BaseTool,
+    ...kubernetesToolClasses
+  } = KubernetesToolClasses;
   // eslint-disable-next-line no-unused-vars
   for (const [_exportName, ToolClass] of Object.entries(kubernetesToolClasses)) {
     if (typeof ToolClass === 'function') {
@@ -86,7 +90,11 @@ function createRunCodeToolForCLI() {
 
   // Add Helm tools
   // eslint-disable-next-line no-unused-vars
-  const { HelmCommonSchemas: _HelmCommonSchemas, HelmBaseTool: _HelmBaseTool, ...helmToolClasses } = HelmToolClasses;
+  const {
+    HelmCommonSchemas: _HelmCommonSchemas,
+    HelmBaseTool: _HelmBaseTool,
+    ...helmToolClasses
+  } = HelmToolClasses;
   // eslint-disable-next-line no-unused-vars
   for (const [_exportName, ToolClass] of Object.entries(helmToolClasses)) {
     if (typeof ToolClass === 'function') {
@@ -222,7 +230,12 @@ function extractCommandDescriptions() {
       for (const [param, schema] of Object.entries(tool.inputSchema.properties)) {
         // If schema is a reference to HelmCommonSchemas, resolve description
         let desc = schema.description;
-        if (!desc && HelmCommonSchemas && HelmCommonSchemas[param] && HelmCommonSchemas[param].description) {
+        if (
+          !desc &&
+          HelmCommonSchemas &&
+          HelmCommonSchemas[param] &&
+          HelmCommonSchemas[param].description
+        ) {
           desc = HelmCommonSchemas[param].description;
         }
         params[param] = desc || 'No description available';
@@ -259,7 +272,12 @@ function extractCommandDescriptions() {
       for (const [param, schema] of Object.entries(tool.inputSchema.properties)) {
         // If schema is a reference to ArgoCommonSchemas, resolve description
         let desc = schema.description;
-        if (!desc && ArgoCommonSchemas && ArgoCommonSchemas[param] && ArgoCommonSchemas[param].description) {
+        if (
+          !desc &&
+          ArgoCommonSchemas &&
+          ArgoCommonSchemas[param] &&
+          ArgoCommonSchemas[param].description
+        ) {
           desc = ArgoCommonSchemas[param].description;
         }
         params[param] = desc || 'No description available';
@@ -296,7 +314,12 @@ function extractCommandDescriptions() {
       for (const [param, schema] of Object.entries(tool.inputSchema.properties)) {
         // If schema is a reference to ArgoCDCommonSchemas, resolve description
         let desc = schema.description;
-        if (!desc && ArgoCDCommonSchemas && ArgoCDCommonSchemas[param] && ArgoCDCommonSchemas[param].description) {
+        if (
+          !desc &&
+          ArgoCDCommonSchemas &&
+          ArgoCDCommonSchemas[param] &&
+          ArgoCDCommonSchemas[param].description
+        ) {
           desc = ArgoCDCommonSchemas[param].description;
         }
         params[param] = desc || 'No description available';
@@ -398,7 +421,15 @@ function generateExampleParams(commandName, params) {
     else if (param === 'revision') examples.push('--revision=1');
     else if (param === 'outputFormat') examples.push('--outputFormat=json');
     else if (param === 'container') examples.push('--container=main');
-    else if (param === 'timestamps' || param === 'previous' || param === 'fetchPodSpecs' || param === 'allValues' || param === 'showResources' || param === 'refresh') examples.push(`--${param}=true`);
+    else if (
+      param === 'timestamps' ||
+      param === 'previous' ||
+      param === 'fetchPodSpecs' ||
+      param === 'allValues' ||
+      param === 'showResources' ||
+      param === 'refresh'
+    )
+      examples.push(`--${param}=true`);
   }
 
   // Only include a few examples to keep it readable
@@ -471,10 +502,19 @@ function showGeneralHelp() {
   console.log('\nExamples:');
 
   const codeCmd = pickExampleCommand('run_code', ['run_code']);
-  const kubeCmd = pickExampleCommand('kubernetes', ['kube_list', 'kube_metrics', 'kube_get', 'kube_logs']);
+  const kubeCmd = pickExampleCommand('kubernetes', [
+    'kube_list',
+    'kube_metrics',
+    'kube_get',
+    'kube_logs',
+  ]);
   const helmCmd = pickExampleCommand('helm', ['helm_list', 'helm_get']);
   const argoCmd = pickExampleCommand('argo', ['argo_list', 'argo_get', 'argo_logs']);
-  const argoCdCmd = pickExampleCommand('argocd', ['argocd_app_list', 'argocd_app_get', 'argocd_app']);
+  const argoCdCmd = pickExampleCommand('argocd', [
+    'argocd_app_list',
+    'argocd_app_get',
+    'argocd_app',
+  ]);
 
   if (codeCmd) {
     console.log('  # Code execution');
@@ -485,17 +525,23 @@ function showGeneralHelp() {
 
   if (kubeCmd) {
     console.log('  # Kubernetes');
-    console.log(`  npm run command -- ${kubeCmd} ${generateExampleParams(kubeCmd, COMMAND_DESCRIPTIONS[kubeCmd].params)}`);
+    console.log(
+      `  npm run command -- ${kubeCmd} ${generateExampleParams(kubeCmd, COMMAND_DESCRIPTIONS[kubeCmd].params)}`,
+    );
   }
 
   if (helmCmd) {
     console.log('  # Helm');
-    console.log(`  npm run command -- ${helmCmd} ${generateExampleParams(helmCmd, COMMAND_DESCRIPTIONS[helmCmd].params)}`);
+    console.log(
+      `  npm run command -- ${helmCmd} ${generateExampleParams(helmCmd, COMMAND_DESCRIPTIONS[helmCmd].params)}`,
+    );
   }
 
   if (argoCmd) {
     console.log('  # Argo');
-    console.log(`  npm run command -- ${argoCmd} ${generateExampleParams(argoCmd, COMMAND_DESCRIPTIONS[argoCmd].params)}`);
+    console.log(
+      `  npm run command -- ${argoCmd} ${generateExampleParams(argoCmd, COMMAND_DESCRIPTIONS[argoCmd].params)}`,
+    );
   }
 
   if (argoCdCmd) {
@@ -595,7 +641,7 @@ async function main() {
       result = await runCodeTool.execute(params);
     } else if (commandInfo.type === 'helm') {
       // Use HelmToolsPlugin for Helm commands
-      console.log('\nExecuting Helm CLI command...');
+      console.log('\nExecuting Helm command (API-first, CLI fallback)...');
       result = await HelmToolsPlugin.executeCommand(resolvedCommandName, params);
     } else if (commandInfo.type === 'argo') {
       // Use ArgoToolsPlugin for Argo commands
@@ -638,7 +684,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Unhandled error:', err);
   process.exit(1);
 });

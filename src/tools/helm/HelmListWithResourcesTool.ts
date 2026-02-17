@@ -1,4 +1,5 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
 import { HelmBaseTool, HelmCommonSchemas, executeHelmCommand } from './BaseTool.js';
 
 /**
@@ -31,7 +32,7 @@ export class HelmListWithResourcesTool implements HelmBaseTool {
     },
   };
 
-  async execute(params: any): Promise<any> {
+  async execute(params: any, _client?: KubernetesClient): Promise<any> {
     try {
       // First get the basic release list
       const listArgs = ['list'];

@@ -1,76 +1,81 @@
-# KubeView MCP Skills: Debugging Kubernetes Clusters
+---
+name: kubeview-debug
+description: Debug and diagnose Kubernetes clusters using KubeView MCP server tools. Use when investigating cluster issues (pod crashes, deployment failures, service connectivity problems, node issues, resource constraints), performing cluster health checks, or troubleshooting any Kubernetes workload. Trigger phrases include "cluster health", "pod won't start", "CrashLoopBackOff", "service unreachable", "deployment stuck", "node pressure", "OOMKilled", "ImagePullBackOff".
+---
 
-This document contains reusable investigation playbooks ("skills") for debugging Kubernetes clusters using the KubeView MCP server.
+# Kubernetes Cluster Debugging
 
-## Assumptions & Constraints
+Reusable investigation playbooks for debugging Kubernetes clusters using KubeView MCP.
 
-- **Read-Only by Design**: Avoid making state changes (edit, delete, scale) through these tools unless explicitly authorized.
-- **Documentation**: Use `search_tools` to find new capabilities.
-- **Prefer MCP Tools**: Use `kube_*` tools over shelling out to `kubectl`.
+## Core Principles
+
+- **Read-Only**: Avoid state changes unless explicitly authorized.
+- **Prefer MCP Tools**: Use `kube_*` tools over `kubectl` commands.
 - **Security First**: Treat output as potentially sensitive.
-- **Declarative over Imperative**: When suggesting fixes, provide YAML snippets rather than `kubectl patch/edit` commands.
+- **Declarative Fixes**: Provide YAML snippets rather than imperative `kubectl` commands.
 
-## Tool Quick Map
+## Tool Quick Reference
 
-- **Cluster + Workloads**: `kube_list`, `kube_get`, `kube_metrics`
+- **Cluster & Workloads**: `kube_list`, `kube_get`, `kube_metrics`
 - **Logs**: `kube_logs` (single pod), `kube_log` (multi-pod with filters + events)
 - **Network**: `kube_net`, `kube_exec`, `kube_port`
 - **Discovery**: `search_tools` (tools-mode), `run_code` (code-mode)
 
-In code-mode (`run_code`), these become `tools.kubernetes.*` (e.g., `tools.kubernetes.list`).
-
----
+In code-mode, tools become `tools.kubernetes.*` (e.g., `tools.kubernetes.list`).
 
 ## Debugging Decision Tree
 
 ```
 Issue reported
     │
-    ├─ Pod not running? ──────────► See: Debug a Pod that Won't Start
+    ├─ Pod not running? ──────────► Skill: Debug Pod Failures
     │
-    ├─ Service unreachable? ──────► See: Debug a Service With No Traffic
+    ├─ Service unreachable? ──────► Skill: Debug Service Connectivity
     │
-    ├─ Deployment stuck? ─────────► See: Debug a Deployment
+    ├─ Deployment stuck? ─────────► Skill: Debug Deployment Rollout
     │
-    ├─ Node issues? ──────────────► See: Node Debugging
+    ├─ Node issues? ──────────────► Skill: Node Debugging
     │
-    └─ Performance/Resources? ────► See: Resource Debugging
+    └─ Performance/Resources? ────► Skill: Resource Debugging
 ```
 
 ---
 
-## Skill: Cluster Triage (fast)
+## Skill: Cluster Triage
 
-**Intent**: Get a high-signal overview and decide where to drill down next.
+**When**: Get high-level cluster health overview, identify problem areas.
 
-**Procedure**:
+**Trigger**: "cluster health", "triage the cluster", "what's wrong"
 
-1. **Cluster overview (diagnostics)**
+**Steps**:
+
+1. **Cluster diagnostics**
    ```json
    { "tool": "kube_list", "args": {} }
    ```
 
-2. **Metrics + diagnostics**
+2. **Metrics + top consumers**
    ```json
    { "tool": "kube_metrics", "args": { "diagnostics": true, "includeSummary": true, "topN": 5 } }
    ```
 
-3. **Identify "Worst" Namespaces** (if not obvious)
-   - Look for high counts of `CrashLoopBackOff` or `Pending`.
-   - List pods in that namespace:
+3. **Drill into problem namespaces**
+   - Identify namespaces with high `CrashLoopBackOff` or `Pending` counts
    ```json
    { "tool": "kube_list", "args": { "namespace": "<ns>" } }
    ```
 
 ---
 
-## Skill: Debug a Pod that Won't Start / CrashLoop
+## Skill: Debug Pod Failures
 
-**Intent**: Identify why a pod is Pending / CrashLoopBackOff / ImagePullBackOff / OOMKilled.
+**When**: Pod is Pending, CrashLoopBackOff, ImagePullBackOff, or OOMKilled.
 
-**Procedure**:
+**Trigger**: "pod won't start", "CrashLoopBackOff", "ImagePullBackOff", "OOMKilled"
 
-1. **Describe the pod with events + diagnostics**
+**Steps**:
+
+1. **Describe pod with events**
    ```json
    {
      "tool": "kube_get",
@@ -84,7 +89,7 @@ Issue reported
    }
    ```
 
-2. **Pull logs (current & previous)**
+2. **Check logs (current & previous)**
    ```json
    {
      "tool": "kube_logs",
@@ -92,28 +97,25 @@ Issue reported
    }
    ```
 
-3. **Common Pod Issues Checklist**:
+3. **Common causes**:
    - **CrashLoopBackOff**:
-     - Exit Code 1: App error (check logs).
-     - Exit Code 137: OOMKilled (check memory limits vs usage).
-     - Exit Code 143: Graceful termination timeout or SIGTERM.
-   - **ImagePullBackOff**:
-     - Check image name/tag spelling.
-     - Check ImagePullSecrets (registry auth).
-   - **Pending**:
-     - Insufficient CPU/Memory (Cluster full?).
-     - Unsatisfiable Node Affinity/Selector.
-     - PVC binding failure.
+     - Exit 1: App error (check logs)
+     - Exit 137: OOMKilled (memory limit too low)
+     - Exit 143: SIGTERM timeout
+   - **ImagePullBackOff**: Check image name/tag, verify ImagePullSecrets
+   - **Pending**: Insufficient resources, node affinity issues, or PVC binding failure
 
 ---
 
-## Skill: Debug a Deployment / Rollout Not Progressing
+## Skill: Debug Deployment Rollout
 
-**Intent**: Explain why a deployment has missing/zero ready replicas.
+**When**: Deployment has 0 ready replicas or rollout not progressing.
 
-**Procedure**:
+**Trigger**: "deployment stuck", "rollout not progressing", "0/1 ready"
 
-1. **Check Deployment Status & Conditions**
+**Steps**:
+
+1. **Check deployment status**
    ```json
    {
      "tool": "kube_get",
@@ -126,7 +128,7 @@ Issue reported
    }
    ```
 
-2. **Inspect ReplicaSets** (Is a new RS failing to spin up?)
+2. **Inspect ReplicaSets** (Is new RS failing to create pods?)
    ```json
    {
      "tool": "kube_list",
@@ -134,7 +136,7 @@ Issue reported
    }
    ```
 
-3. **Aggregate Logs** (See if new pods are failing immediately)
+3. **Aggregate logs** (Are new pods failing immediately?)
    ```json
    {
      "tool": "kube_log",
@@ -148,29 +150,31 @@ Issue reported
    }
    ```
 
-**Common Issues**:
-- **Progressing Stuck**: New ReplicaSet can't create pods (quota? errors?).
-- **Available < Desired**: Pods running but failing Readiness Probe.
-- **Old ReplicaSets not cleaning up**: Deployment strategy issues.
+**Common issues**:
+- New ReplicaSet can't create pods (quota/errors?)
+- Pods running but failing readiness probe
+- Old ReplicaSets not cleaning up (strategy issue)
 
 ---
 
-## Skill: Debug a Service With No Traffic / No Endpoints
+## Skill: Debug Service Connectivity
 
-**Intent**: Determine if the issue is Selector, Pod Readiness, or Network Policy.
+**When**: Service has no traffic, endpoints missing, or unreachable.
 
-**Procedure**:
+**Trigger**: "service unreachable", "no endpoints", "can't reach service"
 
-1. **Verify Endpoints Exist**
+**Steps**:
+
+1. **Verify endpoints exist**
    ```json
    {
      "tool": "kube_get",
      "args": { "resourceType": "endpoints", "name": "<svc>", "namespace": "<ns>" }
    }
    ```
-   - *Empty?* Check Service Selector vs Pod Labels. Are pods Ready?
+   - Empty? Check Service selector vs Pod labels. Are pods Ready?
 
-2. **Test Connectivity from inside cluster**
+2. **Test connectivity from cluster**
    ```json
    {
      "tool": "kube_net",
@@ -188,53 +192,73 @@ Issue reported
 
 ## Skill: Node Debugging
 
-**Intent**: Identify if node-level issues (Pressure, Taints) are causing pod failures.
+**When**: Node-level issues causing pod failures.
 
-**Procedure**:
+**Trigger**: "node not ready", "node pressure", "taints blocking pods"
 
-1. **List Nodes & Status**
+**Steps**:
+
+1. **List nodes**
    ```json
    { "tool": "kube_list", "args": { "resourceType": "node" } }
    ```
 
-2. **Describe Specific Node**
+2. **Describe specific node**
    ```json
    { "tool": "kube_get", "args": { "resourceType": "node", "name": "<node>", "includeEvents": true } }
    ```
 
-**Conditions to Watch**:
-- **Ready**: Must be `True`.
-- **MemoryPressure / DiskPressure / PIDPressure**: If `True`, node is evicting/blocking pods.
-- **NetworkUnavailable**: CNI plugin failure?
+**Key conditions**:
+- **Ready**: Must be `True`
+- **MemoryPressure/DiskPressure/PIDPressure**: If `True`, node is evicting pods
+- **NetworkUnavailable**: CNI plugin failure
 
 ---
 
 ## Skill: Resource Debugging
 
-**Intent**: Detect resource bottlenecks (CPU throttling, OOM).
+**When**: Detecting resource bottlenecks (CPU throttling, OOM).
 
-**Procedure**:
+**Trigger**: "CPU throttling", "memory pressure", "high CPU/memory"
 
-1. **Top Pods/Nodes**
+**Steps**:
+
+1. **Top consumers**
    ```json
    { "tool": "kube_metrics", "args": { "topN": 10, "includeSummary": true } }
    ```
 
-2. **OOMKilled Investigation**
-   - Check `kube_get` pod status for `LastState: OOMKilled`.
-   - Solution: Increase Memory Limit or fix leak.
+2. **OOMKilled investigation**
+   - Check `kube_get` pod status for `LastState: OOMKilled`
+   - Solution: Increase memory limit or fix leak
 
-3. **CPU Throttling**
-   - If app is slow but no errors: Check if usage is near CPU Limit.
-   - Solution: Increase CPU Limit (or remove limit and keep request).
+3. **CPU throttling**
+   - App slow but no errors? Check if usage near CPU limit
+   - Solution: Increase CPU limit or remove limit (keep request)
 
 ---
 
-## Skill: Long Investigation Hygiene (using `plan_step`)
+## Advanced: Code Mode Bulk Analysis
 
-**Intent**: Keep multi-step debugging stable and reviewable.
+**When**: Complex queries requiring logic (e.g., "find all pods without resource limits").
 
-**Template**:
+**Trigger**: "bulk analysis", "find pods without limits", "code mode"
+
+**Example**:
+```typescript
+const pods = await tools.kubernetes.list({ resourceType: 'pod' });
+const noLimits = pods.items.filter(p =>
+  p.spec.containers.some(c => !c.resources?.limits)
+);
+return { count: noLimits.length, names: noLimits.map(p => p.metadata.name) };
+```
+
+---
+
+## Multi-Step Investigation Hygiene
+
+For complex investigations spanning multiple steps, use `plan_step` to maintain clear progress tracking:
+
 ```json
 {
   "tool": "plan_step",
@@ -245,19 +269,4 @@ Issue reported
     "nextStepNeeded": true
   }
 }
-```
-
----
-
-## Skill: One-shot Code Mode Triage (Advanced)
-
-**Intent**: Use `run_code` for complex logic (e.g., "Find all pods without resource limits").
-
-**Example**:
-```typescript
-const pods = await tools.kubernetes.list({ resourceType: 'pod' });
-const noLimits = pods.items.filter(p =>
-  p.spec.containers.some(c => !c.resources?.limits)
-);
-return { count: noLimits.length, names: noLimits.map(p => p.metadata.name) };
 ```

@@ -1,5 +1,6 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { executeCliCommand, validateCli } from '../../utils/CliUtils.js';
+import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
 
 /**
  * Base interface for all Helm MCP tool commands
@@ -13,7 +14,7 @@ export interface HelmBaseTool {
   /**
    * Execute the command with given parameters
    */
-  execute(params: any): Promise<any>;
+  execute(params: any, client?: KubernetesClient): Promise<any>;
 }
 
 /**

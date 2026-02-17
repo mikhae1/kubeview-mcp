@@ -1,4 +1,5 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
 import { HelmBaseTool, HelmCommonSchemas, executeHelmCommand } from './BaseTool.js';
 
 /**
@@ -19,7 +20,7 @@ export class HelmGetHooksTool implements HelmBaseTool {
     },
   };
 
-  async execute(params: any): Promise<any> {
+  async execute(params: any, _client?: KubernetesClient): Promise<any> {
     try {
       const args = ['get', 'hooks', params.releaseName];
 

@@ -1,5 +1,12 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { HelmBaseTool, HelmCommonSchemas, executeHelmCommand } from './BaseTool.js';
+import { KubernetesClient } from '../../kubernetes/KubernetesClient.js';
+import { HelmReleaseOperations } from '../../kubernetes/resources/HelmReleaseOperations.js';
+import {
+  HelmBaseTool,
+  HelmCommonSchemas,
+  executeHelmCommand,
+  validateHelmCLI,
+} from './BaseTool.js';
 
 /**
  * List Helm releases
@@ -65,32 +72,46 @@ export class HelmListTool implements HelmBaseTool {
     },
   };
 
-  async execute(params: any): Promise<any> {
+  async execute(params: any, client?: KubernetesClient): Promise<any> {
+    const outputFormat = params.outputFormat || 'json';
+    let apiError: Error | undefined;
+
+    if (client && outputFormat === 'json') {
+      try {
+        await client.refreshCurrentContext();
+        const resolvedNamespace =
+          params.namespace || (params.allNamespaces ? undefined : client.getCurrentNamespace());
+        const helmOps = new HelmReleaseOperations(client);
+        return await helmOps.listReleases({
+          namespace: resolvedNamespace,
+          selector: params.selector,
+          statuses: this.buildStatusFilters(params),
+          maxReleases: params.maxReleases,
+        });
+      } catch (error) {
+        apiError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+
     try {
       const args = ['list'];
 
-      // Add namespace parameter
       if (params.namespace) {
         args.push('--namespace', params.namespace);
       } else if (params.allNamespaces) {
         args.push('--all-namespaces');
       }
 
-      // Add output format
-      const outputFormat = params.outputFormat || 'json';
       args.push('--output', outputFormat);
 
-      // Add selector
       if (params.selector) {
         args.push('--selector', params.selector);
       }
 
-      // Add max releases
       if (params.maxReleases) {
         args.push('--max', params.maxReleases.toString());
       }
 
-      // Add status filters
       if (params.deployed) args.push('--deployed');
       if (params.failed) args.push('--failed');
       if (params.pending) args.push('--pending');
@@ -98,10 +119,26 @@ export class HelmListTool implements HelmBaseTool {
       if (params.uninstalled) args.push('--uninstalled');
       if (params.uninstalling) args.push('--uninstalling');
 
-      const result = await executeHelmCommand(args);
-      return result;
+      await validateHelmCLI();
+      return await executeHelmCommand(args);
     } catch (error: any) {
+      if (apiError) {
+        throw new Error(
+          `Failed to list Helm releases via Kubernetes API (${apiError.message}) and CLI fallback (${error.message})`,
+        );
+      }
       throw new Error(`Failed to list Helm releases: ${error.message}`);
     }
+  }
+
+  private buildStatusFilters(params: any): string[] {
+    const statuses: string[] = [];
+    if (params.deployed) statuses.push('deployed');
+    if (params.failed) statuses.push('failed');
+    if (params.pending) statuses.push('pending');
+    if (params.superseded) statuses.push('superseded');
+    if (params.uninstalled) statuses.push('uninstalled');
+    if (params.uninstalling) statuses.push('uninstalling');
+    return statuses;
   }
 }
