@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-02-17
+
+### Added
+- **feat(helm): add API-first backend support for Helm commands**
+- **feat(helm): add CLI fallback support for Helm v4 commands**
+
+### Changed
+- **Refactor CLI run-command.js to simplify Kubernetes and Helm tool class handling**
+
+
 ## [1.6.0] - 2026-02-04
 
 ### Changed
