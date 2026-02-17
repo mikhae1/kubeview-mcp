@@ -68,14 +68,10 @@ function createRunCodeToolForCLI() {
   const allTools = [];
 
   // Add Kubernetes tools
-  // eslint-disable-next-line no-unused-vars
-  const {
-    CommonSchemas: _CommonSchemas,
-    BaseTool: _BaseTool,
-    ...kubernetesToolClasses
-  } = KubernetesToolClasses;
-  // eslint-disable-next-line no-unused-vars
-  for (const [_exportName, ToolClass] of Object.entries(kubernetesToolClasses)) {
+  const kubernetesToolClasses = { ...KubernetesToolClasses };
+  delete kubernetesToolClasses.CommonSchemas;
+  delete kubernetesToolClasses.BaseTool;
+  for (const [, ToolClass] of Object.entries(kubernetesToolClasses)) {
     if (typeof ToolClass === 'function') {
       try {
         const instance = new ToolClass();
@@ -89,14 +85,10 @@ function createRunCodeToolForCLI() {
   }
 
   // Add Helm tools
-  // eslint-disable-next-line no-unused-vars
-  const {
-    HelmCommonSchemas: _HelmCommonSchemas,
-    HelmBaseTool: _HelmBaseTool,
-    ...helmToolClasses
-  } = HelmToolClasses;
-  // eslint-disable-next-line no-unused-vars
-  for (const [_exportName, ToolClass] of Object.entries(helmToolClasses)) {
+  const helmToolClasses = { ...HelmToolClasses };
+  delete helmToolClasses.HelmCommonSchemas;
+  delete helmToolClasses.HelmBaseTool;
+  for (const [, ToolClass] of Object.entries(helmToolClasses)) {
     if (typeof ToolClass === 'function') {
       try {
         const instance = new ToolClass();
