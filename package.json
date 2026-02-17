@@ -43,7 +43,7 @@
     "publish:tag": "VERSION=$(node -p \"require('./package.json').version\") && if git rev-parse \"v$VERSION\" >/dev/null 2>&1; then echo \"Tag v$VERSION already exists, skipping\"; else git tag \"v$VERSION\" && echo \"Tagged version v$VERSION\"; fi",
     "publish:npm": "VERSION=$(node -p \"require('./package.json').version\") && if npm view \"$npm_package_name@$VERSION\" version >/dev/null 2>&1; then echo \"Version $VERSION already published, skipping npm publish\"; else npm whoami >/dev/null 2>&1 || npm login; npm publish; fi",
     "publish:git": "git push origin master --tags",
-    "publish:mcp": "mcp-publisher login github && mcp-publisher publish server.json",
+    "publish:mcp": "mcp-publisher publish server.json",
     "publish": "npm run publish:commit && npm run publish:npm && npm run publish:git && npm run publish:mcp"
   },
   "keywords": [
