@@ -39,12 +39,12 @@
     "release:build": "npm run build",
     "release:version": "node scripts/update-version.js && node scripts/build-version.js",
     "release": "npm run release:qa && npm run release:version && npm run release:build",
-    "publish:commit": "git commit -m 'Release v$(node -p \"require('./package.json').version\")' || echo 'Commit failed'",
+    "publish:commit": "git commit -m \"Release v$(node -p \\\"require('./package.json').version\\\")\" || echo \"No changes to commit, skipping\"",
     "publish:tag": "VERSION=$(node -p \"require('./package.json').version\") && if git rev-parse \"v$VERSION\" >/dev/null 2>&1; then echo \"Tag v$VERSION already exists, skipping\"; else git tag \"v$VERSION\" && echo \"Tagged version v$VERSION\"; fi",
-    "publish:npm": "VERSION=$(node -p \"require('./package.json').version\") && if npm view \"$npm_package_name@$VERSION\" version >/dev/null 2>&1; then echo \"Version $VERSION already published, skipping npm publish\"; else npm whoami >/dev/null 2>&1 || npm login; npm publish; fi",
+    "publish:npm": "VERSION=$(node -p \"require('./package.json').version\") && if npm view \"$npm_package_name@$VERSION\" version >/dev/null 2>&1; then echo \"Version $VERSION already published, skipping npm publish\"; else npm whoami >/dev/null 2>&1 || npm login; RELEASE_FLOW=1 npm publish; fi",
     "publish:git": "git push origin master --tags",
     "publish:mcp": "mcp-publisher publish server.json",
-    "publish": "npm run publish:commit && npm run publish:npm && npm run publish:git && npm run publish:mcp"
+    "publish": "if [ \"$RELEASE_FLOW\" = \"1\" ]; then echo \"Skipping publish pipeline in npm publish lifecycle\"; else npm run publish:commit && npm run publish:npm && npm run publish:git && npm run publish:mcp; fi"
   },
   "keywords": [
     "kubernetes",
