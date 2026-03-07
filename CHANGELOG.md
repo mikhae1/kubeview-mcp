@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-03-07
+
+### Changed
+- **Refactor publishing scripts and add tests for release workflow**
+- **Enhance publish scripts and update README for clarity**
+- **Update publish:mcp script in package.json to remove login requirement for mcp-publisher**
+- **Refactor CLI run-command.js to simplify Kubernetes and Helm tool class handling**
+
 ## [1.7.0] - 2026-02-17
 
 ### Added
@@ -15,7 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Refactor CLI run-command.js to simplify Kubernetes and Helm tool class handling**
-
 
 ## [1.6.0] - 2026-02-04
 
