@@ -1,29 +1,23 @@
 # KubeView MCP – Kubernetes Model Context Protocol Server
 
+[![npm version](https://img.shields.io/npm/v/kubeview-mcp)](https://www.npmjs.com/package/kubeview-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8+-blue)](https://www.typescriptlang.org/)
 
-**KubeView** is a read-only Model Context Protocol (MCP) server that enables AI agents (like Cursor IDE, Claude Code CLI, Codex CLI, Gemini CLI, etc.) to inspect, diagnose, and debug Kubernetes clusters safely. It provides a comprehensive set of tools for Kubernetes, Helm, Argo Workflows, and Argo CD.
-Learn more about the benefits of code mode and implementation in [Evicting MCP tool calls from your Kubernetes cluster](https://dev.to/mikhae1/evicting-mcp-tool-calls-from-your-kubernetes-cluster-428k).
+**KubeView** is a read-only [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that lets AI agents (Cursor, Claude Code, Codex CLI, Gemini CLI, etc.) safely inspect, diagnose, and debug Kubernetes clusters. It covers Kubernetes core, Helm, Argo Workflows, and Argo CD.
+
+> Read more: [Evicting MCP tool calls from your Kubernetes cluster](https://dev.to/mikhae1/evicting-mcp-tool-calls-from-your-kubernetes-cluster-428k)
 
 ---
 
 ## ✨ Features
 
-- **🧠 Code Mode**: Sandboxed TypeScript environment for complex reasoning and multi-step workflows.
-- **🛡️ Read-Only & Safe**: Designed for production safety with zero write access and sensitive data masking.
-- **☸️ Kubernetes Integration**: List/get resources, fetch metrics, stream logs and events, execute commands, and tools to diagnose network issues.
-- **📦 Helm Support (API-first)**: Inspect releases, values, manifests, and history via Kubernetes API first, with the CLI fallback.
-- **🐙 Argo Ecosystem**: Manage Argo Workflows and Argo CD applications using direct Kubernetes API or CLI.
-
----
-
-## MCP SDK Compatibility
-
-- This project is pinned to `@modelcontextprotocol/sdk@^1.25.3`.
-- Legacy loose type imports (`Tools`, `Prompts`, `Resources`, `Roots`, `Sampling`) are disallowed.
-- This compatibility pass intentionally excludes Streamable HTTP transport migration and icon metadata rollout.
+- **🧠 Code Mode** – Sandboxed TypeScript runtime for complex reasoning and multi-step workflows.
+- **🛡️ Read-Only & Safe** – Zero write access; sensitive data masking for production clusters.
+- **☸️ Kubernetes** – List/get resources, fetch metrics, stream logs and events, exec into containers, diagnose network issues.
+- **📦 Helm (API-first)** – Inspect releases, values, manifests, and history via the Kubernetes API with CLI fallback.
+- **🐙 Argo Ecosystem** – Manage Argo Workflows and Argo CD via the Kubernetes API or CLI.
 
 ---
 
@@ -33,21 +27,21 @@ Learn more about the benefits of code mode and implementation in [Evicting MCP t
 
 - Node.js ≥ 18
 - Access to a Kubernetes cluster
-- Optionally, CLIs installed in current $PATH: `helm` (fallback only), `argo`, `argocd`
+- Optional CLIs in `$PATH`: `helm` (fallback only), `argo`, `argocd`
 
 ### Installation
 
 ```bash
-# start the server
+# Run the server directly
 npx -y kubeview-mcp
 
-# install as a claude code mcp server
+# Add to Claude Code
 claude mcp add kubernetes -- npx kubeview-mcp
 ```
 
-### Configuration for MCP Clients
+### MCP Client Configuration
 
-Add to your `mcpServers` configuration (e.g., in Cursor or Claude Desktop):
+Add to your `mcpServers` config (Cursor, Claude Desktop, etc.):
 
 ```json
 {
@@ -62,118 +56,94 @@ Add to your `mcpServers` configuration (e.g., in Cursor or Claude Desktop):
 
 ### Environment Variables
 
-Configure the server using environment variables:
-
 | Variable             | Description                                  | Default          |
 | -------------------- | -------------------------------------------- | ---------------- |
 | `KUBECONFIG`         | Path to kubeconfig file                      | `~/.kube/config` |
 | `MCP_MODE`           | Server mode: `all`, `code`, or `tools`       | `all`            |
-| `MCP_LOG_LEVEL`      | Log level (`error`, `warn`, `info`, `debug`) | `info`           |
-| `MCP_HIDE_SENSITIVE` | Enable global sensitive data masking         | `false`          |
+| `MCP_LOG_LEVEL`      | Log level: `error`, `warn`, `info`, `debug`  | `info`           |
+| `MCP_HIDE_SENSITIVE` | Mask sensitive data globally                 | `false`          |
 
 ---
 
-## 🛠️ Tools Overview
+## 🛠️ Tools
 
 ### Kubernetes
 
-- **`kube_list`**: List resources or get cluster diagnostics.
-- **`kube_get`**: Describe specific resources (supports all K8s types).
-- **`kube_metrics`**: Fetch CPU/memory metrics for nodes and pods.
-- **`kube_logs`**: Fetch or stream container logs.
-- **`kube_exec`**: Execute commands in containers (read-only recommended).
-- **`kube_port`**: Port-forward to pods/services.
-- **`kube_net`**: Run in-cluster network diagnostics.
+| Tool           | Description                                              |
+| -------------- | -------------------------------------------------------- |
+| `kube_list`    | List resources or get cluster diagnostics                |
+| `kube_get`     | Describe a specific resource (all K8s types supported)   |
+| `kube_metrics` | Fetch CPU/memory metrics for nodes and pods              |
+| `kube_logs`    | Fetch or stream container logs                           |
+| `kube_exec`    | Execute commands inside containers                       |
+| `kube_port`    | Port-forward to pods or services                         |
+| `kube_net`     | Run in-cluster network diagnostics                       |
 
 ### Helm
 
-- **`helm_list`**: List Helm releases (Kubernetes API first, CLI fallback).
-- **`helm_get`**: Fetch release values, manifests, notes, hooks, resources, status, and history (Kubernetes API first, CLI fallback).
+| Tool        | Description                                                       |
+| ----------- | ----------------------------------------------------------------- |
+| `helm_list` | List Helm releases (Kubernetes API first, CLI fallback)           |
+| `helm_get`  | Fetch release values, manifests, notes, hooks, status, history    |
 
-### Helm Execution Strategy
-
-- Helm tools are **API-first by default** and read Helm release metadata from Kubernetes storage backends (Secrets and ConfigMaps).
-- Helm CLI is retained as a compatibility fallback path.
-- In normal read-only scenarios with Kubernetes API access, Helm operations do not require the `helm` binary.
-- If Helm is configured with a non-Kubernetes storage backend (for example SQL), CLI fallback may be required.
-- For `helm_get`/`helm_list`, JSON/default behavior uses API first; non-JSON formatting may use CLI fallback.
+**Helm execution strategy:** Tools read Helm metadata directly from Kubernetes storage (Secrets / ConfigMaps) by default — no `helm` binary needed for standard read-only use. CLI fallback is used for non-JSON formatting or non-Kubernetes storage backends (e.g. SQL).
 
 ### Argo
 
-- **`argo_list` / `argo_get`**: Manage Argo Workflows.
-- **`argocd_app`**: Inspect Argo CD applications and resources.
+| Tool          | Description                              |
+| ------------- | ---------------------------------------- |
+| `argo_list`   | List Argo Workflows                      |
+| `argo_get`    | Inspect a specific Argo Workflow         |
+| `argocd_app`  | Inspect Argo CD applications             |
 
 ### Utilities
 
-- **`run_code`**: Execute sandboxed TypeScript code for complex tasks.
-- **`plan_step`**: Record step-by-step planning state for long, complex investigations.
+| Tool        | Description                                                    |
+| ----------- | -------------------------------------------------------------- |
+| `run_code`  | Execute sandboxed TypeScript for complex tasks                 |
+| `plan_step` | Persist step-by-step planning state across long investigations |
 
-### Why `plan_step` really helps:
-
-1. **Stable multi-step planning without bloating chat context.**
-   Instead of dumping a massive plan into the conversation, the agent can store step-by-step progress in `plan_step` and keep user-facing responses clean.
-2. **A consistent state machine for long tasks.**
-   Complex workflows usually need: plan -> execute step 1 -> verify -> step 2 -> backtrack -> branch -> finalize. `plan_step` gives the agent a structured way to follow that lifecycle without losing track.
-3. **Better tool routing.**
-   Good agents alternate between thinking and acting. `plan_step` encourages that rhythm: log intent, call real tools, capture outcome, decide next step.
+**Why `plan_step`?** It keeps the chat context clean by storing progress externally, gives agents a structured state machine (plan → execute → verify → branch), and encourages the think-then-act rhythm that produces better results on complex workflows.
 
 ---
 
 ## 🧠 Code Mode
 
-Inspired by [Code execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp), KubeView ships with a code-mode runtime that allows agents to explore the API, search tools, and execute complex workflows in a sandboxed environment.
+Inspired by [Code execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp), KubeView ships a sandboxed code runtime for agents to explore the API and run complex workflows.
 
-### What it provides
+- **MCP Bridge** – All registered MCP tools are callable from within `run_code`.
+- **Dynamic TypeScript Definitions** – Tool schemas are auto-converted to a typed `global.d.ts`, preventing hallucinated parameters.
+- **Tool Discovery** – `tools.search()` and `tools.list()` let agents find capabilities at runtime without loading the full schema.
+- **Sandboxed Execution** – Locked-down Node.js `vm` environment with access only to `console` and the `tools` global.
 
-- **MCP Bridge Layer**: Seamlessly connects to all registered MCP server tools.
-- **Dynamic TypeScript Definitions**: Automatically converts tool schemas into a strongly-typed `global.d.ts` resource, enabling agents to use valid TypeScript patterns and enjoy type safety without hallucinating parameters.
-- **Tool Search Utilities**: Runtime helpers like `tools.search()` and `tools.list()` allow agents to progressively discover capabilities without needing to load the entire schema context upfront.
-- **Sandboxed Execution**: A locked-down Node.js environment (via `vm`) with controlled access to the `console` and the `tools` global object, ensuring safe execution of agent-generated code.
-
-### Usage
-
-For complex tasks requiring logic, loops, or data processing, use **Code Mode**:
+Enable code-only mode:
 
 ```json
 "env": { "MCP_MODE": "code" }
 ```
 
-### 💡 Pro Tip: `code-mode` MCP Prompt
+### Built-in `code-mode` Prompt
 
-The server includes a built-in MCP server prompt named **`code-mode`** that injects the full TypeScript API documentation, tool overview, and examples into the context.
-
-**In Cursor IDE**:
-Simply type `/kubeview/code-mode` in the prompt (or select it from the `/` prompt menu). This gives the AI the exact context it needs to write correct `run_code` scripts immediately.
+The server includes a **`code-mode`** MCP prompt that injects full TypeScript API docs and examples into the agent context. In Cursor, type `/kubeview/code-mode` in the prompt bar to activate it.
 
 ---
 
 ## 💻 Local Development
 
-1. **Clone & Install**:
-
-   ```bash
-   git clone https://github.com/mikhae1/kubeview-mcp.git
-   cd kubeview-mcp
-   npm install
-   ```
-
-2. **Build & Run**:
-
-   ```bash
-   npm run build
-   npm start
-   ```
-
-3. **Test**:
-   ```bash
-   npm test
-   ```
-
-### CLI Usage
-
-You can test tools directly via the CLI:
-
 ```bash
+# Clone and install
+git clone https://github.com/mikhae1/kubeview-mcp.git
+cd kubeview-mcp
+npm install
+
+# Build and run
+npm run build
+npm start
+
+# Test
+npm test
+
+# Run a tool directly via CLI
 npm run command -- kube_list --namespace=default
 ```
 
