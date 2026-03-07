@@ -39,12 +39,12 @@
     "release:build": "npm run build",
     "release:version": "node scripts/update-version.js && node scripts/build-version.js",
     "release": "npm run release:qa && npm run release:version && npm run release:build",
-    "publish:commit": "if git diff --cached --quiet; then echo \"No staged changes, skipping commit\"; else git commit -m \"Release v$npm_package_version\"; fi",
-    "publish:tag": "VERSION=$(node -p \"require('./package.json').version\") && if git rev-parse \"v$VERSION\" >/dev/null 2>&1; then echo \"Tag v$VERSION already exists, skipping\"; else git tag \"v$VERSION\" && echo \"Tagged version v$VERSION\"; fi",
-    "publish:npm": "VERSION=$(node -p \"require('./package.json').version\") && if npm view \"$npm_package_name@$VERSION\" version >/dev/null 2>&1; then echo \"Version $VERSION already published, skipping npm publish\"; else npm whoami >/dev/null 2>&1 || npm login; npm publish; fi",
-    "publish:git": "git push origin master --tags",
-    "publish:mcp": "node scripts/publish-mcp.js",
-    "publish:all": "npm run publish:commit && npm run publish:npm && npm run publish:git && npm run publish:mcp",
+    "publish:commit": "tsx scripts/release-publish.ts commit",
+    "publish:tag": "tsx scripts/release-publish.ts tag",
+    "publish:npm": "tsx scripts/release-publish.ts npm",
+    "publish:git": "tsx scripts/release-publish.ts git",
+    "publish:mcp": "tsx scripts/publish-mcp.ts",
+    "publish:all": "tsx scripts/release-publish.ts all",
     "release:publish": "npm run publish:all"
   },
   "keywords": [
