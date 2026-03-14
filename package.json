@@ -38,7 +38,7 @@
     "release:qa": "npm run lint && npm run typecheck && npm run test",
     "release:build": "npm run build",
     "release:version": "node scripts/update-version.js && node scripts/build-version.js",
-    "release": "npm run release:qa && npm run release:version && npm run release:build",
+    "release": "npm install && npm run release:qa && npm run release:version && npm run release:build",
     "publish:commit": "tsx scripts/release-publish.ts commit",
     "publish:tag": "tsx scripts/release-publish.ts tag",
     "publish:npm": "tsx scripts/release-publish.ts npm",
