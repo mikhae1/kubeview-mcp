@@ -7,12 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-03-27
+
+### Changed
+- **Upgrading dependencies including brace-expansion, flatted, handlebars, picomatch, and yaml for improved functionality and security.**
+
+
 ## [1.7.2] - 2026-03-14
 
 ### Changed
 - **Update dependencies in package-lock.json and modify release script in package.json to include npm install step. Key updates include upgrading minimatch, express, and ajv versions for improved functionality and security.**
 - **Update package-lock.json to version 1.7.1**
-
 
 ## [1.7.1] - 2026-03-07
 
