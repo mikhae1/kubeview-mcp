@@ -7,12 +7,12 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/mikhae1/kubeview-mcp",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "kubeview-mcp",
-      "version": "1.7.3",
+      "version": "1.7.4",
       "transport": {
         "type": "stdio"
       },
