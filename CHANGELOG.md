@@ -7,11 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.5] - 2026-04-22
+
+### Changed
+- **Update hono to version 4.12.14.**
+
+
 ## [1.7.4] - 2026-04-08
 
 ### Changed
 - **Upgrade dependencies including @hono/node-server, hono, and path-to-regexp for improved functionality and security.**
-
 
 ## [1.7.3] - 2026-03-27
 

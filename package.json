@@ -1,6 +1,6 @@
 {
   "name": "kubeview-mcp",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "Read-only MCP server enabling code-driven AI analysis of Kubernetes clusters",
   "homepage": "https://github.com/mikhae1/kubeview-mcp",
   "mcpName": "io.github.mikhae1/kubeview",
