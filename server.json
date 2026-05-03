@@ -7,12 +7,12 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/mikhae1/kubeview-mcp",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "kubeview-mcp",
-      "version": "1.7.5",
+      "version": "1.7.6",
       "transport": {
         "type": "stdio"
       },
@@ -21,6 +21,13 @@
           "name": "KUBECONFIG",
           "description": "Path to kubeconfig file; defaults to ~/.kube/config if unset.",
           "format": "filepath",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_TRANSPORT",
+          "description": "Transport mode: 'stdio' (default) or 'http'. The published package metadata still targets stdio by default.",
+          "format": "string",
           "isRequired": false,
           "isSecret": false
         },
@@ -62,6 +69,55 @@
         {
           "name": "MCP_TIMEOUT",
           "description": "Default timeout in milliseconds for operations. If unset, uses plugin-specific defaults.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_HTTP_HOST",
+          "description": "HTTP bind host when MCP_TRANSPORT=http. Defaults to 127.0.0.1.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_HTTP_PORT",
+          "description": "HTTP port when MCP_TRANSPORT=http. Defaults to 3000.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_HTTP_PATH",
+          "description": "HTTP endpoint path when MCP_TRANSPORT=http. Defaults to /mcp.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_HTTP_STATELESS",
+          "description": "Disable session IDs in HTTP mode. Set to 'true' or '1' for stateless request handling.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_HTTP_JSON_RESPONSE",
+          "description": "Prefer JSON responses over SSE in HTTP mode. Set to 'true' or '1' to enable.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_ALLOWED_HOSTS",
+          "description": "Comma-separated Host allowlist for HTTP mode. Required when binding to 0.0.0.0 or ::.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCP_ALLOWED_ORIGINS",
+          "description": "Comma-separated Origin allowlist for HTTP mode.",
           "format": "string",
           "isRequired": false,
           "isSecret": false

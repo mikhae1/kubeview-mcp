@@ -233,6 +233,19 @@ describe('MCPServer', () => {
       const logger = server.getLogger() as any;
       expect(logger.error).toHaveBeenCalledWith('Failed to start MCP server', expect.any(Error));
     });
+
+    it('should start with a custom transport', async () => {
+      const customTransport = {
+        start: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+        send: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+        close: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      };
+
+      await server.startWithTransport(customTransport as any);
+
+      const mcpServer = server.getServer() as any;
+      expect(mcpServer.connect).toHaveBeenCalledWith(customTransport);
+    });
   });
 
   describe('stop', () => {

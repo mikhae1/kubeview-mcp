@@ -59,9 +59,37 @@ Add to your `mcpServers` config (Cursor, Claude Desktop, etc.):
 | Variable             | Description                                  | Default          |
 | -------------------- | -------------------------------------------- | ---------------- |
 | `KUBECONFIG`         | Path to kubeconfig file                      | `~/.kube/config` |
+| `MCP_TRANSPORT`      | Transport: `stdio` (default) or `http`       | `stdio`          |
 | `MCP_MODE`           | Server mode: `all`, `code`, or `tools`       | `all`            |
 | `MCP_LOG_LEVEL`      | Log level: `error`, `warn`, `info`, `debug`  | `info`           |
 | `MCP_HIDE_SENSITIVE` | Mask sensitive data globally                 | `false`          |
+| `MCP_HTTP_HOST`      | HTTP bind host when `MCP_TRANSPORT=http`     | `127.0.0.1`      |
+| `MCP_HTTP_PORT`      | HTTP port when `MCP_TRANSPORT=http`          | `3000`           |
+| `MCP_HTTP_PATH`      | Streamable HTTP endpoint path                | `/mcp`           |
+| `MCP_HTTP_STATELESS` | Disable session IDs in HTTP mode             | `false`          |
+| `MCP_HTTP_JSON_RESPONSE` | Prefer JSON responses over SSE           | `false`          |
+| `MCP_ALLOWED_HOSTS`  | Comma-separated Host allowlist for HTTP mode | local defaults   |
+| `MCP_ALLOWED_ORIGINS`| Comma-separated Origin allowlist for HTTP mode | unset         |
+
+### Streamable HTTP Mode
+
+KubeView can also run as a standalone **Streamable HTTP** server for hosted or manually managed deployments.
+
+```bash
+MCP_TRANSPORT=http \
+MCP_HTTP_HOST=127.0.0.1 \
+MCP_HTTP_PORT=3000 \
+npx -y kubeview-mcp
+```
+
+This starts a Streamable HTTP endpoint at `http://127.0.0.1:3000/mcp`.
+
+Notes:
+
+- `stdio` remains the default and is still the right choice for MCP client configs such as Claude Desktop, Cursor, and Codex CLI.
+- `MCP_HTTP_STATELESS=true` disables session IDs. That is useful for simple request/response patterns, but stateful features such as `plan_step` history are not meaningful in that mode.
+- If you bind HTTP mode to `0.0.0.0` or `::`, you must set `MCP_ALLOWED_HOSTS`.
+- HTTP mode is intended for manual deployment. The published MCP registry metadata still targets `stdio`.
 
 ---
 

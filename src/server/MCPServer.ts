@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
   CallToolRequestSchema,
   ListResourcesRequestSchema,
@@ -145,8 +146,10 @@ export interface MCPServerOptions {
 export class MCPServer {
   private static readonly MAX_MALFORMED_STDIN_LOGS = 5;
   private server: Server;
-  private transport: StdioServerTransport;
+  private transport?: Transport;
   private logger: winston.Logger;
+  private hasLoggedStartupBegin = false;
+  private hasLoggedStartupSuccess = false;
   private clientLoggingLevel?: LoggingLevel;
   private tools: Map<string, ToolEntry> = new Map();
   private resources: Map<string, Resource> = new Map();
@@ -187,18 +190,10 @@ export class MCPServer {
       },
     );
 
-    // Initialize stdio transport
-    this.transport = new StdioServerTransport();
-
     this.clientLoggingLevel = this.parseLoggingLevel(process.env.MCP_CLIENT_LOG_LEVEL);
 
     // Initialize Winston logger (stderr only to avoid interfering with MCP stdout)
     this.logger = this.createLogger();
-
-    // Add custom error handler to the transport (skip in tests)
-    if (!options.skipTransportErrorHandling) {
-      this.setupTransportErrorHandling();
-    }
 
     // Set up handlers
     this.setupHandlers();
@@ -290,10 +285,14 @@ export class MCPServer {
     this.eventListeners = [];
   }
 
+  private isStdioTransport(transport: Transport | undefined): transport is StdioServerTransport {
+    return transport instanceof StdioServerTransport;
+  }
+
   /**
-   * Set up custom error handling for the transport
+   * Set up stdio-specific error handling for the transport.
    */
-  private setupTransportErrorHandling(): void {
+  private setupStdioTransportErrorHandling(): void {
     // Handle connection errors in the transport
     // StdioServerTransport uses the process stdin/stdout directly
     this.addTrackedListener(process.stdin, 'error', (error) => {
@@ -323,10 +322,10 @@ export class MCPServer {
   }
 
   /**
-   * Attempt to gracefully restart the server connection
+   * Attempt to gracefully restart the stdio server connection
    */
   private async gracefulRestart(): Promise<void> {
-    if (this.isShuttingDown) return;
+    if (this.isShuttingDown || !this.isStdioTransport(this.transport)) return;
 
     this.logger.info('Attempting to gracefully restart server connection...');
 
@@ -618,17 +617,27 @@ export class MCPServer {
    * Start the MCP server
    */
   public async start(): Promise<void> {
-    this.logger.info('Starting MCP server...');
+    await this.startWithTransport(new StdioServerTransport());
+  }
+
+  /**
+   * Start the MCP server with an explicit transport.
+   */
+  public async startWithTransport(transport: Transport): Promise<void> {
+    this.logStartupBegin();
+    this.transport = transport;
 
     try {
       if (this.options.skipTransportErrorHandling) {
         // Simple connection for tests
-        await this.server.connect(this.transport);
+        await this.server.connect(transport);
+      } else if (this.isStdioTransport(transport)) {
+        this.setupStdioTransportErrorHandling();
+        await this.connectStdioWithErrorHandling(transport);
       } else {
-        // Wrap the connection with our custom error handling for production
-        await this.connectWithErrorHandling();
+        await this.server.connect(transport);
       }
-      this.logger.info('MCP server started successfully');
+      this.logStartupSuccess();
     } catch (error) {
       this.logger.error('Failed to start MCP server', error);
       throw error;
@@ -636,9 +645,9 @@ export class MCPServer {
   }
 
   /**
-   * Connect to the transport with improved error handling
+   * Connect to stdio with improved error handling
    */
-  private async connectWithErrorHandling(): Promise<void> {
+  private async connectStdioWithErrorHandling(transport: StdioServerTransport): Promise<void> {
     // Validate incoming JSON-RPC frames without disrupting SDK listeners.
     const validateChunk = (chunk: Buffer | string): void => {
       try {
@@ -663,7 +672,7 @@ export class MCPServer {
     }
 
     // Connect to the transport
-    await this.server.connect(this.transport);
+    await this.server.connect(transport);
   }
 
   /**
@@ -781,6 +790,30 @@ export class MCPServer {
    */
   public cleanup(): void {
     this.removeAllListeners();
+  }
+
+  /**
+   * Emit the standard startup-begin log once, even if startup is split across phases.
+   */
+  public logStartupBegin(): void {
+    if (this.hasLoggedStartupBegin) {
+      return;
+    }
+
+    this.hasLoggedStartupBegin = true;
+    this.logger.info('Starting MCP server...');
+  }
+
+  /**
+   * Emit the standard startup-success log once, even if startup is split across phases.
+   */
+  public logStartupSuccess(): void {
+    if (this.hasLoggedStartupSuccess) {
+      return;
+    }
+
+    this.hasLoggedStartupSuccess = true;
+    this.logger.info('MCP server started successfully');
   }
 
   /**

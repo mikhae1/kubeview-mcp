@@ -50,16 +50,16 @@ function getNamedImportsFromSdkTypes(fileContent: string): string[] {
   return imports;
 }
 
-describe('MCP SDK 1.25.3 compatibility', () => {
-  it('pins @modelcontextprotocol/sdk to ^1.25.3 in package.json and package-lock.json', () => {
+describe('MCP SDK 1.29.0 compatibility', () => {
+  it('pins @modelcontextprotocol/sdk to ^1.29.0 in package.json and package-lock.json', () => {
     const packageJsonPath = path.join(process.cwd(), 'package.json');
     const packageLockPath = path.join(process.cwd(), 'package-lock.json');
 
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
     const packageLock = JSON.parse(fs.readFileSync(packageLockPath, 'utf8'));
 
-    expect(packageJson.dependencies['@modelcontextprotocol/sdk']).toBe('^1.25.3');
-    expect(packageLock.packages[''].dependencies['@modelcontextprotocol/sdk']).toBe('^1.25.3');
+    expect(packageJson.dependencies['@modelcontextprotocol/sdk']).toBe('^1.29.0');
+    expect(packageLock.packages[''].dependencies['@modelcontextprotocol/sdk']).toBe('^1.29.0');
   });
 
   it('does not use removed loose SDK type exports from @modelcontextprotocol/sdk/types.js', () => {

@@ -1,57 +1,55 @@
 #!/usr/bin/env node
 /**
  * Kubernetes MCP Server
- * Main entry point for the Model Context Protocol server
- *
- * Modes (MCP_MODE env var):
- * - code: exposes only `run_code` for agent code execution
- * - tools: exposes only Kubernetes, Helm, and Argo tools (no `run_code`)
- * - all (default): exposes both tools and `run_code`
- *   per https://www.anthropic.com/engineering/code-execution-with-mcp
+ * Main entry point for the Model Context Protocol server.
  */
 
 import { Resource } from '@modelcontextprotocol/sdk/types.js';
 import { MCPServer } from './server/MCPServer.js';
+import { StreamableHttpRuntime } from './server/StreamableHttpRuntime.js';
+import { loadTransportConfig } from './server/TransportConfig.js';
 import { KubernetesToolsPlugin } from './plugins/KubernetesToolsPlugin.js';
 import { HelmToolsPlugin } from './plugins/HelmToolsPlugin.js';
 import { ArgoToolsPlugin } from './plugins/ArgoToolsPlugin.js';
 import { ArgoCDToolsPlugin } from './plugins/ArgoCDToolsPlugin.js';
 import { RunCodeTool } from './tools/RunCodeTool.js';
-
+import { loadCodeModeConfig } from './utils/CodeModeConfig.js';
 import { VERSION } from './version.js';
+
 export { VERSION };
 
-import { loadCodeModeConfig } from './utils/CodeModeConfig.js';
+type MCPMode = 'code' | 'tools' | 'all';
 
-/**
- * Code-mode bootstrap: minimal surface with only `run_code` tool.
- * Follows progressive disclosure per Anthropic's MCP code execution approach.
- * Loads all plugins internally so run_code can execute tool calls.
- */
-async function startCodeMode(server: MCPServer): Promise<void> {
-  const config = loadCodeModeConfig();
+function getMCPMode(): MCPMode {
+  const mode = process.env.MCP_MODE?.toLowerCase();
+  if (mode === 'code' || mode === 'tools' || mode === 'all') {
+    return mode;
+  }
+  return 'all';
+}
 
-  // Load all plugins internally (not exposed to MCP, but available for code execution)
-  const internalServer = new MCPServer({
-    skipTransportErrorHandling: true,
-    skipGracefulShutdown: true,
-  });
-
-  const kubernetesPlugin = new KubernetesToolsPlugin();
-  await internalServer.loadPlugin(kubernetesPlugin);
-
+async function loadOptionalPlugins(server: MCPServer): Promise<void> {
   const optionalPlugins = [new HelmToolsPlugin(), new ArgoToolsPlugin(), new ArgoCDToolsPlugin()];
   for (const plugin of optionalPlugins) {
     try {
-      await internalServer.loadPlugin(plugin);
+      await server.loadPlugin(plugin);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Optional plugin '${plugin.name}' skipped: ${message}`);
     }
   }
+}
 
-  // Create tool executor that calls internal tools
-  // Strip server prefix from qualified names (e.g., "kubeview-mcp__kube_list" → "kube_list")
+async function configureCodeModeServer(server: MCPServer): Promise<void> {
+  const config = loadCodeModeConfig();
+  const internalServer = new MCPServer({
+    skipTransportErrorHandling: true,
+    skipGracefulShutdown: true,
+  });
+
+  await internalServer.loadPlugin(new KubernetesToolsPlugin());
+  await loadOptionalPlugins(internalServer);
+
   const toolExecutor = async (qualifiedName: string, args: unknown) => {
     const toolName = qualifiedName.includes('__')
       ? qualifiedName.split('__').pop()!
@@ -64,16 +62,12 @@ async function startCodeMode(server: MCPServer): Promise<void> {
   runCodeTool.setTools(internalServer.getTools());
 
   server.registerTool(runCodeTool.tool, (params) => runCodeTool.execute(params));
-
-  // Register global.d.ts resource for type definitions
   server.registerResource({
     uri: 'file:///sys/global.d.ts',
     name: 'Global Type Definitions',
     mimeType: 'application/typescript',
     text: runCodeTool.generateGlobalDts(),
   } as Resource & { text: string });
-
-  // Register code-mode prompt with tool overview and examples
   server.registerPrompt({
     name: 'code-mode',
     description:
@@ -86,81 +80,31 @@ async function startCodeMode(server: MCPServer): Promise<void> {
       },
     ],
   });
-
-  await server.start();
-  console.error(
-    `KubeView MCP is running in code-mode. ` +
-      'Only `run_code` tool exposed; code can call all Kubernetes/Helm/Argo tools.',
-  );
 }
 
-/**
- * Tools-only mode: loads all Kubernetes, Helm, Argo, and ArgoCD plugins without run_code.
- */
-async function startToolsMode(server: MCPServer): Promise<void> {
-  const kubernetesPlugin = new KubernetesToolsPlugin();
-  await server.loadPlugin(kubernetesPlugin);
-
-  const optionalPlugins = [new HelmToolsPlugin(), new ArgoToolsPlugin(), new ArgoCDToolsPlugin()];
-  for (const plugin of optionalPlugins) {
-    try {
-      await server.loadPlugin(plugin);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`Optional plugin '${plugin.name}' skipped: ${message}`);
-    }
-  }
-
-  await server.start();
-  console.error(`KubeView MCP is running in tools-mode. Only Kubernetes/Helm/Argo tools exposed.`);
+async function configureToolsModeServer(server: MCPServer): Promise<void> {
+  await server.loadPlugin(new KubernetesToolsPlugin());
+  await loadOptionalPlugins(server);
 }
 
-/**
- * All mode: loads all Kubernetes, Helm, Argo, and ArgoCD plugins plus run_code.
- */
-async function startAllMode(server: MCPServer): Promise<void> {
+async function configureAllModeServer(server: MCPServer): Promise<void> {
+  await server.loadPlugin(new KubernetesToolsPlugin());
+  await loadOptionalPlugins(server);
+
   const config = loadCodeModeConfig();
-
-  const kubernetesPlugin = new KubernetesToolsPlugin();
-  await server.loadPlugin(kubernetesPlugin);
-
-  const optionalPlugins = [new HelmToolsPlugin(), new ArgoToolsPlugin(), new ArgoCDToolsPlugin()];
-  for (const plugin of optionalPlugins) {
-    try {
-      await server.loadPlugin(plugin);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`Optional plugin '${plugin.name}' skipped: ${message}`);
-    }
-  }
-
-  // Set up run_code tool
-  const toolExecutor = async (qualifiedName: string, args: unknown) => {
-    return server.executeTool(qualifiedName, args);
-  };
-
   const runCodeTool = new RunCodeTool(config.sandbox);
-  runCodeTool.setToolExecutor(toolExecutor);
-
-  // We need to set tools for the description builder.
-  // In all mode, we can get them from the server after plugins are loaded.
-  // However, server.getTools() returns Tool[], but setTools expects Tool[] which is fine.
-  // But wait, RunCodeTool.setTools uses them to build the manifest for the description.
-  // We should do this before registering the tool so the description is correct?
-  // Actually, we can do it before starting the server.
+  runCodeTool.setToolExecutor(async (qualifiedName: string, args: unknown) =>
+    server.executeTool(qualifiedName, args),
+  );
   runCodeTool.setTools(server.getTools());
 
   server.registerTool(runCodeTool.tool, (params) => runCodeTool.execute(params));
-
-  // Register global.d.ts resource for type definitions
   server.registerResource({
     uri: 'file:///sys/global.d.ts',
     name: 'Global Type Definitions',
     mimeType: 'application/typescript',
     text: runCodeTool.generateGlobalDts(),
   } as Resource & { text: string });
-
-  // Register code-mode prompt with tool overview and examples
   server.registerPrompt({
     name: 'code-mode',
     description:
@@ -173,40 +117,60 @@ async function startAllMode(server: MCPServer): Promise<void> {
       },
     ],
   });
-
-  await server.start();
-  console.error(`KubeView MCP is running. Waiting for connections...`);
 }
 
-type MCPMode = 'code' | 'tools' | 'all';
+export async function createServerForMode(mode: MCPMode): Promise<MCPServer> {
+  const server = new MCPServer();
 
-function getMCPMode(): MCPMode {
-  const mode = process.env.MCP_MODE?.toLowerCase();
-  if (mode === 'code' || mode === 'tools' || mode === 'all') {
-    return mode;
+  switch (mode) {
+    case 'code':
+      await configureCodeModeServer(server);
+      break;
+    case 'tools':
+      await configureToolsModeServer(server);
+      break;
+    case 'all':
+    default:
+      await configureAllModeServer(server);
+      break;
   }
-  return 'all'; // default
+
+  return server;
+}
+
+function getReadyMessage(mode: MCPMode): string {
+  switch (mode) {
+    case 'code':
+      return 'KubeView MCP is running in code-mode. Only `run_code` tool exposed; code can call all Kubernetes/Helm/Argo tools.';
+    case 'tools':
+      return 'KubeView MCP is running in tools-mode. Only Kubernetes/Helm/Argo tools exposed.';
+    case 'all':
+    default:
+      return 'KubeView MCP is running. Waiting for connections...';
+  }
 }
 
 export async function main(): Promise<void> {
   console.error(`Kubernetes MCP Server v${VERSION} - Starting...`);
 
   try {
-    const server = new MCPServer();
     const mode = getMCPMode();
+    const transportConfig = loadTransportConfig();
 
-    switch (mode) {
-      case 'code':
-        await startCodeMode(server);
-        break;
-      case 'tools':
-        await startToolsMode(server);
-        break;
-      case 'all':
-      default:
-        await startAllMode(server);
-        break;
+    if (transportConfig.transport === 'http') {
+      const runtime = new StreamableHttpRuntime(transportConfig.http, {
+        createAppServer: () => createServerForMode(mode),
+      });
+      await runtime.start();
+
+      const { host, port, path } = runtime.getAddress();
+      runtime.logInfo(`${getReadyMessage(mode)} HTTP endpoint: http://${host}:${port}${path}`);
+      return;
     }
+
+    const server = await createServerForMode(mode);
+    await server.start();
+    console.error(getReadyMessage(mode));
   } catch (error) {
     console.error('Failed to start MCP server:', error);
     process.exit(1);
