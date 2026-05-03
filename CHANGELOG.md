@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.7.6] - 2026-05-03
+## [Unreleased]
+
+## [1.8.0] - 2026-05-03
 
 ### Added
 - **Streamable HTTP transport mode** with configurable host, port, path, stateless mode, JSON responses, and host/origin allowlists.
@@ -18,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **HTTP runtime correctness**: handle IPv6 `::1` bindings correctly, return JSON-RPC parse errors for malformed HTTP request bodies, and stop pre-session app servers when `initialize` is rejected before a session is created.
 - **HTTP startup reporting**: log the actual bound port when `MCP_HTTP_PORT=0` assigns an ephemeral port.
 - **Transport config scoping**: only enforce HTTP host allowlist validation when `MCP_TRANSPORT=http`, so default `stdio` startup is unaffected by HTTP-only environment variables.
+
+## [1.7.6] - 2026-05-03
+
+### Changed
+- Version bump to 1.7.6
 
 ## [1.7.5] - 2026-04-22
 
