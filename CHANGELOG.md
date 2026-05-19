@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-05-19
+
+### Changed
+- **Upgrading express-rate-limit, fast-uri, hono, ip-address, and ws for improved functionality and security**
+
 ## [1.8.0] - 2026-05-03
 
 ### Added
