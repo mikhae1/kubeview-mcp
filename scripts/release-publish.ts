@@ -261,6 +261,11 @@ function runGitPush(runner: Runner): string {
   return branch;
 }
 
+function runMcpPublish(runner: Runner, cwd: string): 'published' | 'skipped' {
+  runGitPush(runner);
+  return publishMcp({ runner, cwd });
+}
+
 const stepHandlers: Record<
   Exclude<PublishStep, 'all'>,
   (context: { cwd: string; runner: Runner; packageInfo: PackageInfo }) => unknown
@@ -269,7 +274,7 @@ const stepHandlers: Record<
   tag: ({ runner, packageInfo }) => runTag(runner, packageInfo.version),
   npm: ({ runner, packageInfo }) => runNpmPublish(runner, packageInfo.name, packageInfo.version),
   git: ({ runner }) => runGitPush(runner),
-  mcp: ({ runner, cwd }) => publishMcp({ runner, cwd }),
+  mcp: ({ runner, cwd }) => runMcpPublish(runner, cwd),
 };
 
 export function runPublishWorkflow(
@@ -292,7 +297,6 @@ export function runPublishWorkflow(
   if (step === 'all') {
     stepHandlers.commit(context);
     stepHandlers.tag(context);
-    stepHandlers.git(context);
     stepHandlers.npm(context);
     stepHandlers.mcp(context);
     return;

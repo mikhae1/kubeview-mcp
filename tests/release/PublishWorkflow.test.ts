@@ -32,7 +32,7 @@ describe('release publish workflow', () => {
     });
   }
 
-  it('creates the tag before pushing during publish:all', () => {
+  it('pushes tags immediately before MCP publish during publish:all', () => {
     const runner = createRunner((command, args) => {
       if (command === 'git' && args.join(' ') === 'diff --cached --quiet') {
         return { status: 1 };
@@ -63,11 +63,11 @@ describe('release publish workflow', () => {
       'git commit -m Release v1.7.0',
       'git rev-parse -q --verify refs/tags/v1.7.0',
       'git tag v1.7.0',
-      'git rev-parse --abbrev-ref HEAD',
-      'git push origin release/main --follow-tags',
       'npm view kubeview-mcp@1.7.0 version',
       'npm whoami',
       'npm publish',
+      'git rev-parse --abbrev-ref HEAD',
+      'git push origin release/main --follow-tags',
       'mcp-publisher publish server.json',
     ]);
     expect(logSpy).toHaveBeenCalledWith('Tagged version v1.7.0');
@@ -123,5 +123,28 @@ describe('release publish workflow', () => {
     expect(stderrSpy).toHaveBeenCalledWith('invalid version: cannot publish duplicate version');
     expect(logSpy).toHaveBeenCalledWith('Version already published to MCP registry, skipping');
     expect(stdoutSpy).not.toHaveBeenCalled();
+  });
+
+  it('pushes tags before starting standalone MCP publish', () => {
+    const runner = createRunner((command, args) => {
+      if (command === 'git' && args.join(' ') === 'rev-parse --abbrev-ref HEAD') {
+        return { status: 0, stdout: 'release/main\n' };
+      }
+      if (command === 'mcp-publisher' && args.join(' ') === 'publish server.json') {
+        return { status: 0 };
+      }
+      return { status: 0 };
+    });
+
+    runPublishWorkflow({ runner, packageInfo, step: 'mcp' });
+
+    const executedCommands = runner.mock.calls.map(
+      ([command, args]) => `${command} ${args.join(' ')}`,
+    );
+    expect(executedCommands).toEqual([
+      'git rev-parse --abbrev-ref HEAD',
+      'git push origin release/main --follow-tags',
+      'mcp-publisher publish server.json',
+    ]);
   });
 });
