@@ -2,6 +2,7 @@
 
 import { spawnSync } from 'child_process';
 import { readFileSync } from 'fs';
+import { homedir } from 'os';
 import { join } from 'path';
 
 const rootDir = process.cwd();
@@ -168,16 +169,101 @@ function isDuplicateMcpVersion(output: string): boolean {
   return output.includes('invalid version: cannot publish duplicate version');
 }
 
+type McpPublisherInvocation = {
+  command: string;
+  prefixArgs: string[];
+};
+
+function getMcpPublisherInvocations(): McpPublisherInvocation[] {
+  return [
+    { command: 'mcp-publisher', prefixArgs: [] },
+    { command: 'npx', prefixArgs: ['-y', 'mcp-publisher'] },
+  ];
+}
+
+function buildMcpPublisherArgs(
+  invocation: McpPublisherInvocation,
+  args: string[],
+): [string, string[]] {
+  return [invocation.command, [...invocation.prefixArgs, ...args]];
+}
+
+function findAvailableMcpPublisher(runner: Runner): McpPublisherInvocation | null {
+  for (const invocation of getMcpPublisherInvocations()) {
+    const [command, args] = buildMcpPublisherArgs(invocation, ['--help']);
+    const result = runCommand(runner, command, args, { quiet: true });
+    if (result.error?.code === 'ENOENT') {
+      continue;
+    }
+    if (result.status === 0) {
+      return invocation;
+    }
+  }
+  return null;
+}
+
+function parseJwtExpiry(token: string): number | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as {
+      exp?: number;
+    };
+    return typeof payload.exp === 'number' ? payload.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+function readMcpPublisherToken(homeDir = homedir()): string | null {
+  const tokenPath = join(homeDir, '.config', 'mcp-publisher', 'token.json');
+  try {
+    const data = JSON.parse(readFileSync(tokenPath, 'utf8')) as { token?: string };
+    return data.token || null;
+  } catch {
+    return null;
+  }
+}
+
+export function isMcpPublisherLoggedIn(homeDir = homedir()): boolean {
+  const token = readMcpPublisherToken(homeDir);
+  if (!token) {
+    return false;
+  }
+
+  const expiry = parseJwtExpiry(token);
+  if (expiry === null) {
+    return false;
+  }
+
+  return expiry > Math.floor(Date.now() / 1000) + 60;
+}
+
+function ensureMcpLogin(runner: Runner, homeDir?: string): void {
+  if (isMcpPublisherLoggedIn(homeDir)) {
+    return;
+  }
+
+  const invocation = findAvailableMcpPublisher(runner);
+  if (!invocation) {
+    return;
+  }
+
+  const [command, args] = buildMcpPublisherArgs(invocation, ['login', 'github']);
+  assertSuccess(command, args, runCommand(runner, command, args, { interactive: true }));
+}
+
 export function publishMcp(
-  options: { runner?: Runner; cwd?: string } = {},
+  options: { runner?: Runner; cwd?: string; homeDir?: string } = {},
 ): 'published' | 'skipped' {
   const runner = options.runner || createRunner({ cwd: options.cwd });
-  const attempts: Array<[string, string[]]> = [
-    ['mcp-publisher', ['publish', 'server.json']],
-    ['npx', ['-y', 'mcp-publisher', 'publish', 'server.json']],
-  ];
+  ensureMcpLogin(runner, options.homeDir);
 
-  for (const [command, args] of attempts) {
+  for (const invocation of getMcpPublisherInvocations()) {
+    const [command, args] = buildMcpPublisherArgs(invocation, ['publish', 'server.json']);
     const result = runCommand(runner, command, args, { quiet: true });
     const output = `${result.stdout}\n${result.stderr}`;
 
@@ -261,20 +347,20 @@ function runGitPush(runner: Runner): string {
   return branch;
 }
 
-function runMcpPublish(runner: Runner, cwd: string): 'published' | 'skipped' {
+function runMcpPublish(runner: Runner, cwd: string, homeDir?: string): 'published' | 'skipped' {
   runGitPush(runner);
-  return publishMcp({ runner, cwd });
+  return publishMcp({ runner, cwd, homeDir });
 }
 
 const stepHandlers: Record<
   Exclude<PublishStep, 'all'>,
-  (context: { cwd: string; runner: Runner; packageInfo: PackageInfo }) => unknown
+  (context: { cwd: string; runner: Runner; packageInfo: PackageInfo; homeDir?: string }) => unknown
 > = {
   commit: ({ runner, packageInfo }) => runCommit(runner, packageInfo.version),
   tag: ({ runner, packageInfo }) => runTag(runner, packageInfo.version),
   npm: ({ runner, packageInfo }) => runNpmPublish(runner, packageInfo.name, packageInfo.version),
   git: ({ runner }) => runGitPush(runner),
-  mcp: ({ runner, cwd }) => runMcpPublish(runner, cwd),
+  mcp: ({ runner, cwd, homeDir }) => runMcpPublish(runner, cwd, homeDir),
 };
 
 export function runPublishWorkflow(
@@ -283,6 +369,7 @@ export function runPublishWorkflow(
     cwd?: string;
     runner?: Runner;
     packageInfo?: PackageInfo;
+    homeDir?: string;
   } = {},
 ): void {
   const {
@@ -290,9 +377,10 @@ export function runPublishWorkflow(
     cwd = rootDir,
     runner = createRunner({ cwd }),
     packageInfo = readPackageInfo(cwd),
+    homeDir,
   } = options;
 
-  const context = { cwd, runner, packageInfo };
+  const context = { cwd, runner, packageInfo, homeDir };
 
   if (step === 'all') {
     stepHandlers.commit(context);
