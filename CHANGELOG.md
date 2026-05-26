@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-05-26
+
+### Changed
+- **Enhance MCP publishing workflow by adding home directory support for token management and login checks. Update qs to 6.15.2 for improved security.**
+
+
 ## [1.8.1] - 2026-05-19
 
 ### Changed
