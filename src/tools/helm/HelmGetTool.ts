@@ -9,6 +9,7 @@ import {
   validateHelmCLI,
 } from './BaseTool.js';
 import { isSensitiveMaskEnabled, maskTextForSensitiveValues } from '../../utils/SensitiveData.js';
+import { getHelmLiveResources } from '../../utils/HelmLiveResources.js';
 
 /**
  * Helm "get" tool covering values, manifest, notes, hooks, and resources.
@@ -49,6 +50,11 @@ export class HelmGetTool implements HelmBaseTool {
           description: 'Show the resources this release created (only for what=status)',
           optional: true,
         },
+        live: {
+          type: 'boolean',
+          description: 'Fetch live Kubernetes resource state when what=resources',
+          optional: true,
+        },
       },
       required: ['what', 'releaseName'],
     },
@@ -64,6 +70,7 @@ export class HelmGetTool implements HelmBaseTool {
       allValues,
       resourceType,
       showResources,
+      live,
     } = params || {};
 
     let apiError: Error | undefined;
@@ -113,6 +120,9 @@ export class HelmGetTool implements HelmBaseTool {
               namespace: resolvedNamespace,
               revision,
             });
+            if (live) {
+              return await getHelmLiveResources(client, manifest, resolvedNamespace, resourceType);
+            }
             return parseManifestResources(manifest, resourceType);
           }
           case 'status': {
@@ -130,7 +140,11 @@ export class HelmGetTool implements HelmBaseTool {
               notes: release.release.info?.notes || '',
             } as any;
             if (showResources) {
-              status.resources = parseManifestResources(release.release.manifest || '');
+              status.resources = await getHelmLiveResources(
+                client,
+                release.release.manifest || '',
+                resolvedNamespace,
+              );
             }
             return status;
           }

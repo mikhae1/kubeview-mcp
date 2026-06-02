@@ -1,7 +1,12 @@
 import { MCPServer } from '../server/MCPServer.js';
 import winston from 'winston';
 import { KubernetesClient } from '../kubernetes/KubernetesClient.js';
-import { type HelmBaseTool, HelmListTool, HelmGetTool } from '../tools/helm/index.js';
+import {
+  type HelmBaseTool,
+  HelmListTool,
+  HelmGetTool,
+  HelmDebugTool,
+} from '../tools/helm/index.js';
 import { BaseToolsPlugin } from './BaseToolsPlugin.js';
 import { KubernetesToolsPlugin } from './KubernetesToolsPlugin.js';
 
@@ -14,7 +19,7 @@ export class HelmToolsPlugin extends BaseToolsPlugin<HelmBaseTool> {
   private kubernetesPlugin?: KubernetesToolsPlugin;
 
   protected createToolInstances(): HelmBaseTool[] {
-    return [new HelmListTool(), new HelmGetTool()];
+    return [new HelmListTool(), new HelmGetTool(), new HelmDebugTool()];
   }
 
   static getCommandNames(): string[] {

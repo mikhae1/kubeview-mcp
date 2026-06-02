@@ -7,6 +7,8 @@ jest.mock('../../src/kubernetes/resources/HelmReleaseOperations', () => ({
   __esModule: true,
   HelmReleaseOperations: jest.fn().mockImplementation(() => ({
     getReleaseValues: jest.fn(),
+    getReleaseManifest: jest.fn(),
+    getRelease: jest.fn(),
   })),
 }));
 
@@ -26,17 +28,29 @@ describe('HelmGetTool API-first behavior', () => {
   let tool: HelmGetTool;
   let client: KubernetesClient;
   let releaseValuesMock: jest.Mock;
+  let releaseManifestMock: jest.Mock;
+  let getReleaseMock: jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
     releaseValuesMock = jest.fn();
+    releaseManifestMock = jest.fn();
+    getReleaseMock = jest.fn();
     (HelmReleaseOperations as unknown as jest.Mock).mockImplementation(() => ({
       getReleaseValues: releaseValuesMock,
+      getReleaseManifest: releaseManifestMock,
+      getRelease: getReleaseMock,
     }));
     tool = new HelmGetTool();
     client = {
       refreshCurrentContext: jest.fn().mockResolvedValue(undefined),
       getCurrentNamespace: jest.fn().mockReturnValue('default'),
+      apps: {
+        readNamespacedDeployment: jest.fn(),
+      },
+      core: {
+        listNamespacedPod: jest.fn().mockResolvedValue({ items: [] }),
+      },
     } as any;
   });
 
@@ -95,5 +109,104 @@ describe('HelmGetTool API-first behavior', () => {
       '--output',
       'json',
     ]);
+  });
+
+  it('keeps what=resources as stored manifest refs unless live is requested', async () => {
+    releaseManifestMock.mockResolvedValue(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+`);
+
+    const result = await tool.execute(
+      {
+        what: 'resources',
+        releaseName: 'demo',
+      },
+      client,
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        kind: 'Deployment',
+      }),
+    ]);
+    expect((client as any).apps.readNamespacedDeployment).not.toHaveBeenCalled();
+  });
+
+  it('returns live resource state for what=resources live=true', async () => {
+    releaseManifestMock.mockResolvedValue(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+`);
+    (client as any).apps.readNamespacedDeployment.mockResolvedValue({
+      metadata: { name: 'demo', namespace: 'default' },
+      spec: { replicas: 1, selector: { matchLabels: { app: 'demo' } } },
+      status: { replicas: 1, readyReplicas: 1 },
+    });
+
+    const result = await tool.execute(
+      {
+        what: 'resources',
+        releaseName: 'demo',
+        live: true,
+      },
+      client,
+    );
+
+    expect(result[0]).toEqual(
+      expect.objectContaining({
+        state: 'ready',
+        ref: expect.objectContaining({ kind: 'Deployment', name: 'demo' }),
+      }),
+    );
+    expect((client as any).apps.readNamespacedDeployment).toHaveBeenCalledWith({
+      name: 'demo',
+      namespace: 'default',
+    });
+    expect(validateHelmCLIMock()).not.toHaveBeenCalled();
+  });
+
+  it('uses live resources for what=status showResources=true on API path', async () => {
+    getReleaseMock.mockResolvedValue({
+      summary: {
+        name: 'demo',
+        namespace: 'default',
+        revision: 3,
+        status: 'deployed',
+        chart: 'demo-1.0.0',
+        app_version: '1.0.0',
+      },
+      release: {
+        info: { description: 'ok', notes: 'notes' },
+        manifest: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+`,
+      },
+    });
+    (client as any).apps.readNamespacedDeployment.mockResolvedValue({
+      metadata: { name: 'demo', namespace: 'default' },
+      spec: { replicas: 1, selector: { matchLabels: { app: 'demo' } } },
+      status: { replicas: 1, readyReplicas: 1 },
+    });
+
+    const result = await tool.execute(
+      {
+        what: 'status',
+        releaseName: 'demo',
+        showResources: true,
+      },
+      client,
+    );
+
+    expect(result.resources[0]).toEqual(expect.objectContaining({ state: 'ready' }));
+    expect((client as any).apps.readNamespacedDeployment).toHaveBeenCalled();
+    expect(validateHelmCLIMock()).not.toHaveBeenCalled();
   });
 });
