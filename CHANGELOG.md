@@ -7,11 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-06-13
+
+### Added
+- **Add npm source and issue metadata (#2)**
+
+
 ## [1.9.1] - 2026-06-13
 
 ### Fixed
 - **(fix) Fix the launch issue for claude desktop**
-
 
 ## [1.9.0] - 2026-06-02
 
