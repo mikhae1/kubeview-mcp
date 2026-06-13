@@ -20,6 +20,9 @@
   "files": [
     "bin/",
     "dist/",
+    "scripts/build-version.js",
+    "src/",
+    "tsconfig.json",
     "*.md"
   ],
   "scripts": {

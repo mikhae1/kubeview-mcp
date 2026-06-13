@@ -52,17 +52,34 @@ class KubeMCPCLI {
         const nodeModulesPath = path.join(this.projectRoot, 'node_modules');
         if (!fs.existsSync(nodeModulesPath)) {
           this.log('📦 Installing dependencies...', colors.blue);
-          execSync('npm install', { cwd: this.projectRoot, stdio: 'inherit' });
+          this.runCommandForMcpStartup('npm install');
         }
 
         // Build the project
-        execSync('npm run build', { cwd: this.projectRoot, stdio: 'inherit' });
+        this.runCommandForMcpStartup('npm run build');
         this.log('✅ Build completed successfully', colors.green);
       } catch (buildError) {
         this.error('❌ Build failed:');
         console.error(buildError);
         process.exit(1);
       }
+    }
+  }
+
+  runCommandForMcpStartup(command) {
+    try {
+      execSync(command, {
+        cwd: this.projectRoot,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      if (error.stdout) {
+        process.stderr.write(error.stdout);
+      }
+      if (error.stderr) {
+        process.stderr.write(error.stderr);
+      }
+      throw error;
     }
   }
 
