@@ -7,11 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-06-21
+
+### Changed
+- **Update to fix security issues**
+- **Update package-lock.json to reflect version bump from 1.9.0 to 1.9.1 and 1.9.2 for kubeview-mcp.**
+
+
 ## [1.9.2] - 2026-06-13
 
 ### Added
 - **Add npm source and issue metadata (#2)**
-
 
 ## [1.9.1] - 2026-06-13
 
